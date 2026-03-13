@@ -45,13 +45,19 @@ export default defineConfig(configEnv => {
               // 提取文件的父文件夹作为文件名
               if (filePath.includes('/src/pages/')) {
                 // 提取文件的父文件夹作为文件名
-                const pageName = filePath.split('/src/pages/')[1];
-                // 替换 [name] 为  name 因为vite不支持
-                const newPath = pageName.replace(/\[([^\]]+)\]/g, '$1');
-
-                const path = newPath.slice(0, newPath.lastIndexOf('/'));
-
-                return `js/pages/${path}/[name]-[hash].js`;
+                const parts = filePath.split('/src/pages/');
+                const pageName = parts[1];
+                
+                if (pageName) {
+                  // 替换 [name] 为  name 因为vite不支持
+                  const newPath = pageName.replace(/\[([^\]]+)\]/g, '$1');
+                  const lastSlashIndex = newPath.lastIndexOf('/');
+                  
+                  if (lastSlashIndex > 0) {
+                    const path = newPath.slice(0, lastSlashIndex);
+                    return `js/pages/${path}/[name]-[hash].js`;
+                  }
+                }
               } else if (filePath.includes('/src/components/')) {
                 return `js/components/[name]-[hash].js`;
               }

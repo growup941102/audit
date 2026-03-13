@@ -31,6 +31,12 @@ export function createViteProxy(env: Env.ImportMeta, enable: boolean) {
 function createProxyItem(item: App.Service.ServiceConfigItem, enableLog: boolean) {
   const proxy: Record<string, ProxyOptions> = {};
 
+  // 检查必要的配置项是否存在
+  if (!item.proxyPattern || !item.baseURL) {
+    consola.warn('代理配置不完整，跳过该项:', item);
+    return proxy;
+  }
+
   proxy[item.proxyPattern] = {
     changeOrigin: true,
     configure: (_proxy: HttpProxy.Server, options: ProxyOptions) => {

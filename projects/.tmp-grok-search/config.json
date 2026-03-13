@@ -1,0 +1,8 @@
+{
+  "base_url": "http://150.40.177.127:3000",
+  "api_key": "sk-WsLTMotiKep0x7YjiUx3KSXyYbGg0bl8L9f28hS3paRiwoJF",
+  "model": "grok-4",
+  "timeout_seconds": 60,
+  "extra_body": {},
+  "extra_headers": {}
+}

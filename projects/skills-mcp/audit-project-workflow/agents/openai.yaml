@@ -1,0 +1,5 @@
+interface:
+  display_name: "Audit Project Workflow"
+  short_description: "审计项目专属研发、需求文档、后端知识沉淀与协作规范工作流技能"
+  default_prompt: "使用 $audit-project-workflow 按 audit 项目规范先整理需求、设计、任务文档，再等待确认后实施。"
+
