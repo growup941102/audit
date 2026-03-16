@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { TableHeaderOperation, useTable, useTableOperate } from '@/features/table';
 
+import ScheduleCreateView from './modules/ScheduleCreateView';
+import ScheduleDetailView from './modules/ScheduleDetailView';
 import ScheduleSearch from './modules/ScheduleSearch';
 import type { RecordWithIndex, ScheduleSearchParams } from './modules/mock';
 import { PAGE_SIZE, fetchScheduleList } from './modules/mock';
@@ -26,16 +28,17 @@ const statusI18nMap: Record<string, string> = {
 
 const DataSchedule = () => {
   const { t } = useTranslation();
+  const nav = useNavigate();
+  const [searchParams] = useSearchParams();
+  const isCreateMode = searchParams.get('mode') === 'add';
+  const isDetailMode = searchParams.get('mode') === 'detail';
+  const detailTaskId = searchParams.get('taskId') || '';
 
   const tableWrapperRef = useRef<HTMLDivElement>(null);
   const wrapperSize = useSize(tableWrapperRef);
   const scrollY = wrapperSize?.height ? wrapperSize.height - 55 : undefined;
 
   const isMobile = useMobile();
-
-  // Drawer state for project detail
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [selectedProject, setSelectedProject] = useState<RecordWithIndex | null>(null);
 
   const { columnChecks, data, run, searchProps, setColumnChecks, tableProps } = useTable({
     apiFn: fetchScheduleList,
@@ -63,8 +66,7 @@ const DataSchedule = () => {
               className="max-w-full! p-0! text-left!"
               type="link"
               onClick={() => {
-                setSelectedProject(record);
-                setDrawerOpen(true);
+                goDetailSchedule(record.taskId);
               }}
             >
               <span className="line-clamp-2 whitespace-normal">{record.projectName}</span>
@@ -129,21 +131,22 @@ const DataSchedule = () => {
       {
         align: 'center',
         key: 'operate',
-        render: (_, _record) => (
+        render: (_, record) => (
           <div className="flex-center gap-8px">
             <AButton
               ghost
               size="small"
               type="primary"
+              onClick={() => {
+                goDetailSchedule(record.taskId);
+              }}
             >
               {t('page.dataSchedule.viewResult')}
             </AButton>
             <ADropdown
               menu={{
                 items: [
-                  { key: 'detail', label: t('page.dataSchedule.viewDetail') },
                   { key: 'log', label: t('page.dataSchedule.executionLog') },
-                  { key: 'rerun', label: t('page.dataSchedule.rerun') },
                   {
                     danger: true,
                     key: 'delete',
@@ -264,9 +267,25 @@ const DataSchedule = () => {
     searchProps.reset();
   }, [searchProps]);
 
-  const { checkedRowKeys, handleAdd, onBatchDeleted, rowSelection } = useTableOperate(data, run, async () => {
+  const { checkedRowKeys, onBatchDeleted, rowSelection } = useTableOperate(data, run, async () => {
     // placeholder
   });
+
+  function goCreateSchedule() {
+    nav('/data-fetch/data-schedule?mode=add');
+  }
+
+  function goDetailSchedule(taskId: string) {
+    nav(`/data-fetch/data-schedule?mode=detail&taskId=${encodeURIComponent(taskId)}`);
+  }
+
+  function backToScheduleList() {
+    nav('/data-fetch/data-schedule');
+  }
+
+  function handleCreateSchedule() {
+    window.$message?.info('暂未接入后端接口，当前仅为界面展示');
+  }
 
   const batchButtons = (
     <ASpace size={8}>
@@ -301,6 +320,24 @@ const DataSchedule = () => {
     </ASpace>
   );
 
+  if (isCreateMode) {
+    return (
+      <ScheduleCreateView
+        onCancel={backToScheduleList}
+        onCreate={handleCreateSchedule}
+      />
+    );
+  }
+
+  if (isDetailMode && detailTaskId) {
+    return (
+      <ScheduleDetailView
+        taskId={detailTaskId}
+        onBack={backToScheduleList}
+      />
+    );
+  }
+
   return (
     <div className="h-full flex-col gap-16px overflow-hidden">
       <ACollapse
@@ -328,7 +365,7 @@ const DataSchedule = () => {
         title={
           <TableHeaderOperation
             hideColumnSetting
-            add={handleAdd}
+            add={goCreateSchedule}
             columns={columnChecks}
             disabledDelete={checkedRowKeys.length === 0}
             loading={tableProps.loading}
@@ -354,30 +391,6 @@ const DataSchedule = () => {
           />
         </div>
       </ACard>
-
-      <ADrawer
-        destroyOnClose
-        height="100vh"
-        open={drawerOpen}
-        placement="bottom"
-        width="100vw"
-        styles={{
-          body: { padding: 0 },
-          header: { display: 'none' }
-        }}
-        onClose={() => {
-          setDrawerOpen(false);
-          setSelectedProject(null);
-        }}
-      >
-        <div className="h-full w-full bg-white">
-          {selectedProject && (
-            <div className="p-24px">
-              <h2>{selectedProject.projectName}</h2>
-            </div>
-          )}
-        </div>
-      </ADrawer>
     </div>
   );
 };

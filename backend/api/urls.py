@@ -5,6 +5,26 @@ from . import views
 urlpatterns = [
     path('captcha/', views.get_captcha, name='get_captcha'),
     path('health/', views.health_check, name='health_check'),
+    path(
+        'data-schedule/tasks/<str:task_id>/extract-result/summary/',
+        views.get_data_schedule_extract_summary,
+        name='get_data_schedule_extract_summary'
+    ),
+    path(
+        'data-schedule/tasks/<str:task_id>/extract-result/fields/',
+        views.get_data_schedule_extract_fields,
+        name='get_data_schedule_extract_fields'
+    ),
+    path(
+        'data-schedule/tasks/<str:task_id>/extract-result/drilldown/',
+        views.get_data_schedule_extract_drilldown,
+        name='get_data_schedule_extract_drilldown'
+    ),
+    path(
+        'data-schedule/tasks/<str:task_id>/extract-result/export/',
+        views.export_data_schedule_extract_result,
+        name='export_data_schedule_extract_result'
+    ),
     path('system-manage/website-settings/upload/', views.upload_website_image, name='upload_website_image'),
     path('system-manage/website-settings/', views.get_website_settings, name='get_website_settings'),
     path('system-manage/website-settings/update/', views.update_website_settings, name='update_website_settings'),

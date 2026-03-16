@@ -10,7 +10,7 @@ import secrets
 import string
 import time
 import uuid
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from django.conf import settings
 from django.contrib.auth import authenticate
@@ -20,6 +20,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core import signing
 from django.core.exceptions import ValidationError
 from django.db import connection, transaction
+from django.http import HttpResponse
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from minio import Minio
@@ -132,6 +133,514 @@ ROLE_BUTTONS_MAP = {
     'R_ADMIN': ['B_CODE2', 'B_CODE3'],
     'R_USER': ['B_CODE3']
 }
+
+DATA_SCHEDULE_SCOPE_ALL = 'all'
+DATA_SCHEDULE_SCOPE_COMPLETE = 'complete'
+DATA_SCHEDULE_SCOPE_MISSING = 'missing'
+DATA_SCHEDULE_SCOPE_SET = {
+    DATA_SCHEDULE_SCOPE_ALL,
+    DATA_SCHEDULE_SCOPE_COMPLETE,
+    DATA_SCHEDULE_SCOPE_MISSING,
+}
+
+
+def _parse_positive_int(value, default=1, max_value=200):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+
+    if parsed <= 0:
+        return default
+    if parsed > max_value:
+        return max_value
+
+    return parsed
+
+
+def _build_data_schedule_mock_fields():
+    fields = [
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'bid_no',
+            'fieldName': '招标编号',
+            'fieldValueDisplay': 'CG1201002025044003(1)',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'project_year',
+            'fieldName': '项目年度',
+            'fieldValueDisplay': '2025',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'bidder_name',
+            'fieldName': '招标人',
+            'fieldValueDisplay': '天津市城市道路桥梁管理事务中心',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'legal_person',
+            'fieldName': '法定代表人',
+            'fieldValueDisplay': '李民',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'project_name',
+            'fieldName': '项目名称',
+            'fieldValueDisplay': '道桥中心2025年度道路挖掘损害修复项目',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'approver_org',
+            'fieldName': '项目批准机关',
+            'fieldValueDisplay': '天津市城市管理委员会',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'approval_doc_no',
+            'fieldName': '批准文号',
+            'fieldValueDisplay': '津城管桥批〔2025〕33号',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'pricing_ceiling',
+            'fieldName': '招标代理机构最高投标限价',
+            'fieldValueDisplay': '39400000',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'authorized_letter',
+            'fieldName': '授权委托书',
+            'fieldValueDisplay': '--',
+            'status': DATA_SCHEDULE_SCOPE_MISSING
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'insurance_proof',
+            'fieldName': '参保缴费证明',
+            'fieldValueDisplay': '--',
+            'status': DATA_SCHEDULE_SCOPE_MISSING
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'project_bill_of_quantities',
+            'fieldName': '工程量清单',
+            'fieldValueDisplay': '--',
+            'status': DATA_SCHEDULE_SCOPE_MISSING
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'bidder_representative',
+            'fieldName': '唱标人代表',
+            'fieldValueDisplay': '--',
+            'status': DATA_SCHEDULE_SCOPE_MISSING
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'bid_opening_host',
+            'fieldName': '唱标人',
+            'fieldValueDisplay': '王文哲',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'recorder',
+            'fieldName': '记录人',
+            'fieldValueDisplay': '洪聪',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': True,
+            'canEdit': True,
+            'fieldKey': 'supervisor_info',
+            'fieldName': '监督人信息',
+            'fieldValueDisplay': '查看',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': True,
+            'canEdit': True,
+            'fieldKey': 'expert_info',
+            'fieldName': '评标专家信息',
+            'fieldValueDisplay': '查看',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'committee_member_list',
+            'fieldName': '评标委员会组成人员名单',
+            'fieldValueDisplay': '--',
+            'status': DATA_SCHEDULE_SCOPE_MISSING
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'party_a_representative_name',
+            'fieldName': '甲方评委代表人姓名',
+            'fieldValueDisplay': '徐鹏',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'party_a_representative_id_no',
+            'fieldName': '甲方评委代表人身份证号',
+            'fieldValueDisplay': '120101197607132554',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'party_a_representative_mobile',
+            'fieldName': '甲方评委代表人手机号',
+            'fieldValueDisplay': '18622884518',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'construction_unit_name',
+            'fieldName': '建设单位法人名称',
+            'fieldValueDisplay': '天津市城市道路桥梁管理事务中心',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'construction_unit_legal_person',
+            'fieldName': '建设单位法人代表姓名',
+            'fieldValueDisplay': '李民',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'construction_unit_cert_no',
+            'fieldName': '建设单位证件号',
+            'fieldValueDisplay': '120108197710274037',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'qualification_review_form',
+            'fieldName': '资格评审情况表',
+            'fieldValueDisplay': '--',
+            'status': DATA_SCHEDULE_SCOPE_MISSING
+        },
+        {
+            'canDrilldown': True,
+            'canEdit': True,
+            'fieldKey': 'bid_ranking',
+            'fieldName': '投标报价排名',
+            'fieldValueDisplay': '查看',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': True,
+            'canEdit': True,
+            'fieldKey': 'winning_candidate_notice',
+            'fieldName': '中标候选人公示',
+            'fieldValueDisplay': '查看',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'winning_company',
+            'fieldName': '中标人',
+            'fieldValueDisplay': '天津路桥建设工程有限公司',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+        {
+            'canDrilldown': False,
+            'canEdit': True,
+            'fieldKey': 'winning_amount',
+            'fieldName': '中标金额',
+            'fieldValueDisplay': '38296827',
+            'status': DATA_SCHEDULE_SCOPE_COMPLETE
+        },
+    ]
+
+    # Fillers to keep a data-dense detail table like the design reference.
+    for index in range(1, 17):
+        status_value = DATA_SCHEDULE_SCOPE_COMPLETE if index % 3 else DATA_SCHEDULE_SCOPE_MISSING
+        fields.append(
+            {
+                'canDrilldown': False,
+                'canEdit': True,
+                'fieldKey': f'extended_field_{index}',
+                'fieldName': f'扩展字段{index}',
+                'fieldValueDisplay': f'扩展值{index}' if status_value == DATA_SCHEDULE_SCOPE_COMPLETE else '--',
+                'status': status_value,
+            }
+        )
+
+    return fields
+
+
+DATA_SCHEDULE_DRILLDOWN_MOCK = {
+    'expert_info': {
+        'columns': [
+            {'editable': True, 'key': 'expertName', 'title': '专家姓名'},
+            {'editable': True, 'key': 'idNo', 'title': '证件号'},
+            {'editable': True, 'key': 'major', 'title': '评标专业'},
+            {'editable': True, 'key': 'expertType', 'title': '专家类型'},
+            {'editable': True, 'key': 'workUnit', 'title': '工作单位'},
+            {'editable': True, 'key': 'contact', 'title': '联系方式'},
+        ],
+        'records': [
+            {'contact': '--', 'expertName': '周盈盈', 'expertType': '社会评委（正常）', 'id': 1, 'idNo': '--', 'major': '--', 'workUnit': '天津海泰市政绿化有限公司'},
+            {'contact': '--', 'expertName': '莫鸿雁', 'expertType': '社会评委（正常）', 'id': 2, 'idNo': '--', 'major': '--', 'workUnit': '天津市蓟州区水务管理服务中心'},
+            {'contact': '--', 'expertName': '高国妍', 'expertType': '社会评委（正常）', 'id': 3, 'idNo': '--', 'major': '--', 'workUnit': '天津市西青区公路建设养护中心'},
+            {'contact': '--', 'expertName': '李晓明', 'expertType': '社会评委（正常）', 'id': 4, 'idNo': '--', 'major': '--', 'workUnit': '天津安纳赛能源科技有限公司'},
+            {'contact': '--', 'expertName': '郭听燃', 'expertType': '招标人代表', 'id': 5, 'idNo': '120101198607303012', 'major': '--', 'workUnit': '天津市城市道路桥梁管理事务中心'},
+            {'contact': '--', 'expertName': '徐鹏', 'expertType': '招标人代表', 'id': 6, 'idNo': '120101197607132554', 'major': '--', 'workUnit': '天津市城市道路桥梁管理事务中心'},
+            {'contact': '--', 'expertName': '刘斌', 'expertType': '招标人代表', 'id': 7, 'idNo': '--', 'major': '--', 'workUnit': '天津市城市道路桥梁管理事务中心'},
+            {'contact': '--', 'expertName': '李志壮', 'expertType': '社会评委（正常）', 'id': 8, 'idNo': '--', 'major': '--', 'workUnit': '天津市建设发展总公司'},
+            {'contact': '--', 'expertName': '白树海', 'expertType': '社会评委（正常）', 'id': 9, 'idNo': '--', 'major': '--', 'workUnit': '天津市市政景观设计有限公司'},
+        ],
+        'title': '字段详情 - 评标专家信息'
+    },
+    'supervisor_info': {
+        'columns': [
+            {'editable': True, 'key': 'name', 'title': '监督人姓名'},
+            {'editable': True, 'key': 'department', 'title': '所属单位'},
+            {'editable': True, 'key': 'duty', 'title': '职务'},
+            {'editable': True, 'key': 'contact', 'title': '联系方式'},
+        ],
+        'records': [
+            {'contact': '13800001234', 'department': '天津市城市管理委员会', 'duty': '项目监督员', 'id': 1, 'name': '张晨'},
+            {'contact': '13900004321', 'department': '天津市城市管理委员会', 'duty': '质量监督员', 'id': 2, 'name': '刘洋'},
+        ],
+        'title': '字段详情 - 监督人信息'
+    },
+    'bid_ranking': {
+        'columns': [
+            {'editable': True, 'key': 'companyName', 'title': '投标单位'},
+            {'editable': True, 'key': 'bidAmount', 'title': '投标报价'},
+            {'editable': True, 'key': 'rank', 'title': '排名'},
+            {'editable': True, 'key': 'remark', 'title': '备注'},
+        ],
+        'records': [
+            {'bidAmount': '38296827', 'companyName': '天津路桥建设工程有限公司', 'id': 1, 'rank': '1', 'remark': '中标候选人'},
+            {'bidAmount': '38900220', 'companyName': '天津市政工程集团', 'id': 2, 'rank': '2', 'remark': '--'},
+            {'bidAmount': '39218800', 'companyName': '天津城建路桥有限公司', 'id': 3, 'rank': '3', 'remark': '--'},
+        ],
+        'title': '字段详情 - 投标报价排名'
+    },
+    'winning_candidate_notice': {
+        'columns': [
+            {'editable': True, 'key': 'candidateName', 'title': '候选人名称'},
+            {'editable': True, 'key': 'publicDate', 'title': '公示日期'},
+            {'editable': True, 'key': 'score', 'title': '综合得分'},
+            {'editable': True, 'key': 'remark', 'title': '备注'},
+        ],
+        'records': [
+            {'candidateName': '天津路桥建设工程有限公司', 'id': 1, 'publicDate': '2026-02-05', 'remark': '第一中标候选人', 'score': '97.50'},
+            {'candidateName': '天津市政工程集团', 'id': 2, 'publicDate': '2026-02-05', 'remark': '第二中标候选人', 'score': '95.20'},
+            {'candidateName': '天津城建路桥有限公司', 'id': 3, 'publicDate': '2026-02-05', 'remark': '第三中标候选人', 'score': '93.40'},
+        ],
+        'title': '字段详情 - 中标候选人公示'
+    }
+}
+
+
+def _get_data_schedule_summary(task_id):
+    return {
+        'bidNo': 'CG1201002025044003(1)',
+        'createTime': '2026-02-04 15:51:30',
+        'creator': '管理员',
+        'progress': 100,
+        'projectName': '道桥中心2025年度道路挖掘损害修复项目',
+        'status': 'success',
+        'taskId': task_id,
+    }
+
+
+def _get_data_schedule_fields(task_id):
+    # task_id is kept for future real data-source replacement.
+    _ = task_id
+    return _build_data_schedule_mock_fields()
+
+
+def _filter_data_schedule_fields_by_scope(fields, scope):
+    if scope == DATA_SCHEDULE_SCOPE_COMPLETE:
+        return [item for item in fields if item.get('status') == DATA_SCHEDULE_SCOPE_COMPLETE]
+    if scope == DATA_SCHEDULE_SCOPE_MISSING:
+        return [item for item in fields if item.get('status') == DATA_SCHEDULE_SCOPE_MISSING]
+    return fields
+
+
+def _build_data_schedule_counts(fields):
+    complete = len([item for item in fields if item.get('status') == DATA_SCHEDULE_SCOPE_COMPLETE])
+    missing = len([item for item in fields if item.get('status') == DATA_SCHEDULE_SCOPE_MISSING])
+    return {'all': len(fields), 'complete': complete, 'missing': missing}
+
+
+def _safe_excel_sheet_name(raw_name, used_names):
+    invalid_chars = ['\\', '/', '*', '?', ':', '[', ']']
+    safe = raw_name
+    for char in invalid_chars:
+        safe = safe.replace(char, '_')
+    safe = (safe or 'sheet').strip()
+    safe = safe[:31]
+    if not safe:
+        safe = 'sheet'
+
+    candidate = safe
+    suffix = 1
+    while candidate in used_names:
+        suffix_text = f'_{suffix}'
+        candidate = f'{safe[:31 - len(suffix_text)]}{suffix_text}'
+        suffix += 1
+
+    used_names.add(candidate)
+    return candidate
+
+
+def _normalize_data_schedule_scope(raw_scope):
+    scope = str(raw_scope or DATA_SCHEDULE_SCOPE_ALL).strip().lower()
+    if not scope:
+        scope = DATA_SCHEDULE_SCOPE_ALL
+    if scope not in DATA_SCHEDULE_SCOPE_SET:
+        return None
+    return scope
+
+
+def _to_data_schedule_field_record(field):
+    return {
+        'canDrilldown': bool(field.get('canDrilldown')),
+        'canEdit': bool(field.get('canEdit')),
+        'drilldownLabel': '查看' if field.get('canDrilldown') else '',
+        'fieldKey': field.get('fieldKey') or '',
+        'fieldName': field.get('fieldName') or '',
+        'fieldValueDisplay': field.get('fieldValueDisplay') or '--',
+        'status': field.get('status') or DATA_SCHEDULE_SCOPE_MISSING
+    }
+
+
+def _paginate_data_schedule_records(records, current, size):
+    total = len(records)
+    start = (current - 1) * size
+    end = start + size
+    return {
+        'current': current,
+        'records': records[start:end],
+        'size': size,
+        'total': total
+    }
+
+
+def _build_data_schedule_export_binary(task_id, scope):
+    try:
+        from openpyxl import Workbook
+    except Exception as exc:
+        logger.exception('openpyxl import failed: %s', exc)
+        raise
+
+    all_fields = _get_data_schedule_fields(task_id)
+    filtered_fields = _filter_data_schedule_fields_by_scope(all_fields, scope)
+    summary = _get_data_schedule_summary(task_id)
+    counts = _build_data_schedule_counts(all_fields)
+    summary['counts'] = counts
+
+    workbook = Workbook()
+    used_sheet_names = set()
+    summary_sheet = workbook.active
+    summary_sheet.title = _safe_excel_sheet_name('任务概览', used_sheet_names)
+    summary_sheet.append(['字段', '内容'])
+    summary_rows = [
+        ('任务标识', summary.get('taskId') or ''),
+        ('项目名称', summary.get('projectName') or ''),
+        ('招标编号', summary.get('bidNo') or ''),
+        ('创建人', summary.get('creator') or ''),
+        ('创建时间', summary.get('createTime') or ''),
+        ('执行状态', summary.get('status') or ''),
+        ('执行进度', f"{summary.get('progress') or 0}%"),
+        ('全部字段', counts.get('all') or 0),
+        ('提取完整', counts.get('complete') or 0),
+        ('提取缺失', counts.get('missing') or 0),
+    ]
+    for row in summary_rows:
+        summary_sheet.append(list(row))
+
+    field_sheet = workbook.create_sheet(_safe_excel_sheet_name(f'字段详情_{scope}', used_sheet_names))
+    field_sheet.append(['字段名称', '字段内容', '状态', '操作'])
+
+    drilldown_sheet_map = {}
+    for field in filtered_fields:
+        if not field.get('canDrilldown'):
+            continue
+        field_key = field.get('fieldKey') or ''
+        if field_key not in DATA_SCHEDULE_DRILLDOWN_MOCK:
+            continue
+        sheet_name = _safe_excel_sheet_name(f"下钻_{field.get('fieldName') or field_key}", used_sheet_names)
+        drilldown_sheet_map[field_key] = sheet_name
+        drilldown_sheet = workbook.create_sheet(sheet_name)
+        drilldown_payload = DATA_SCHEDULE_DRILLDOWN_MOCK[field_key]
+        columns = drilldown_payload.get('columns') or []
+        drilldown_sheet.append([col.get('title') or col.get('key') or '' for col in columns] + ['操作'])
+        for row in drilldown_payload.get('records') or []:
+            row_values = [row.get(col.get('key') or '', '--') for col in columns]
+            row_values.append('编辑 / 删除')
+            drilldown_sheet.append(row_values)
+        drilldown_sheet.freeze_panes = 'A2'
+
+    for index, field in enumerate(filtered_fields, start=2):
+        status_value = field.get('status')
+        if status_value == DATA_SCHEDULE_SCOPE_COMPLETE:
+            status_text = '提取完整'
+        elif status_value == DATA_SCHEDULE_SCOPE_MISSING:
+            status_text = '提取缺失'
+        else:
+            status_text = status_value or ''
+
+        field_sheet.append([
+            field.get('fieldName') or '',
+            field.get('fieldValueDisplay') or '--',
+            status_text,
+            '编辑'
+        ])
+
+        field_key = field.get('fieldKey') or ''
+        if field_key in drilldown_sheet_map:
+            value_cell = field_sheet.cell(row=index, column=2)
+            value_cell.value = '查看'
+            value_cell.hyperlink = f"#{drilldown_sheet_map[field_key]}!A1"
+            value_cell.style = 'Hyperlink'
+
+    field_sheet.freeze_panes = 'A2'
+
+    output = io.BytesIO()
+    workbook.save(output)
+    workbook.close()
+    output.seek(0)
+    return output.getvalue()
 
 
 def success_response(data=None, msg='ok', http_status=status.HTTP_200_OK):
@@ -1028,6 +1537,139 @@ def get_captcha(_request):
 @permission_classes([AllowAny])
 def health_check(_request):
     return success_response({'status': 'ok'})
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='获取数据调度任务提取结果概览',
+    responses={200: '获取成功', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_data_schedule_extract_summary(_request, task_id):
+    all_fields = _get_data_schedule_fields(task_id)
+    summary = _get_data_schedule_summary(task_id)
+    summary['counts'] = _build_data_schedule_counts(all_fields)
+    return success_response(summary, '获取成功')
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='获取数据调度任务提取字段结果列表',
+    manual_parameters=[
+        openapi.Parameter('scope', openapi.IN_QUERY, description='筛选范围: all/complete/missing', type=openapi.TYPE_STRING),
+        openapi.Parameter('current', openapi.IN_QUERY, description='页码，默认1', type=openapi.TYPE_INTEGER),
+        openapi.Parameter('size', openapi.IN_QUERY, description='每页条数，默认20，最大200', type=openapi.TYPE_INTEGER),
+    ],
+    responses={200: '获取成功', 400: '参数错误', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_data_schedule_extract_fields(request, task_id):
+    scope = _normalize_data_schedule_scope(request.query_params.get('scope'))
+    if scope is None:
+        return error_response('scope 参数无效，仅支持 all/complete/missing', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    current = _parse_positive_int(request.query_params.get('current'), default=1, max_value=100000)
+    size = _parse_positive_int(request.query_params.get('size'), default=20, max_value=200)
+
+    all_fields = _get_data_schedule_fields(task_id)
+    filtered_fields = _filter_data_schedule_fields_by_scope(all_fields, scope)
+    field_records = [_to_data_schedule_field_record(item) for item in filtered_fields]
+    paginated_data = _paginate_data_schedule_records(field_records, current, size)
+    paginated_data['scope'] = scope
+    paginated_data['counts'] = _build_data_schedule_counts(all_fields)
+
+    return success_response(paginated_data, '获取成功')
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='获取字段下钻详情数据',
+    manual_parameters=[
+        openapi.Parameter('fieldKey', openapi.IN_QUERY, description='字段标识', type=openapi.TYPE_STRING, required=True),
+        openapi.Parameter('scope', openapi.IN_QUERY, description='筛选范围: all/complete/missing', type=openapi.TYPE_STRING),
+        openapi.Parameter('current', openapi.IN_QUERY, description='页码，默认1', type=openapi.TYPE_INTEGER),
+        openapi.Parameter('size', openapi.IN_QUERY, description='每页条数，默认20，最大200', type=openapi.TYPE_INTEGER),
+    ],
+    responses={200: '获取成功', 400: '参数错误', 404: '字段不存在', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_data_schedule_extract_drilldown(request, task_id):
+    field_key = str(request.query_params.get('fieldKey') or '').strip()
+    if not field_key:
+        return error_response('fieldKey 不能为空', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    scope = _normalize_data_schedule_scope(request.query_params.get('scope'))
+    if scope is None:
+        return error_response('scope 参数无效，仅支持 all/complete/missing', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    current = _parse_positive_int(request.query_params.get('current'), default=1, max_value=100000)
+    size = _parse_positive_int(request.query_params.get('size'), default=20, max_value=200)
+
+    all_fields = _get_data_schedule_fields(task_id)
+    field_map = {item.get('fieldKey'): item for item in all_fields}
+    field_item = field_map.get(field_key)
+    if not field_item:
+        return error_response('字段不存在', ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+    if not field_item.get('canDrilldown'):
+        return error_response('当前字段不支持下钻', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    payload = DATA_SCHEDULE_DRILLDOWN_MOCK.get(field_key)
+    if not payload:
+        return error_response('下钻数据不存在', ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+
+    records = payload.get('records') or []
+    if scope != DATA_SCHEDULE_SCOPE_ALL and field_item.get('status') != scope:
+        records = []
+
+    paginated_data = _paginate_data_schedule_records(records, current, size)
+    paginated_data.update(
+        {
+            'actions': {
+                'canCreate': True,
+                'canDelete': True,
+                'canEdit': True
+            },
+            'columns': payload.get('columns') or [],
+            'fieldKey': field_key,
+            'scope': scope,
+            'title': payload.get('title') or f"字段详情 - {field_item.get('fieldName') or field_key}",
+        }
+    )
+
+    return success_response(paginated_data, '获取成功')
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='导出数据调度提取结果（xlsx，支持下钻 Sheet 跳转）',
+    manual_parameters=[
+        openapi.Parameter('scope', openapi.IN_QUERY, description='筛选范围: all/complete/missing', type=openapi.TYPE_STRING),
+    ],
+    responses={200: '导出成功', 400: '参数错误', 500: '导出失败', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def export_data_schedule_extract_result(request, task_id):
+    scope = _normalize_data_schedule_scope(request.query_params.get('scope'))
+    if scope is None:
+        return error_response('scope 参数无效，仅支持 all/complete/missing', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    try:
+        binary = _build_data_schedule_export_binary(task_id, scope)
+    except Exception:
+        logger.exception('build data schedule export failed, task_id=%s, scope=%s', task_id, scope)
+        return error_response('导出失败，请稍后重试', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    filename = quote(f'data-schedule-{task_id}-{scope}.xlsx')
+    response = HttpResponse(
+        binary,
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = f"attachment; filename*=UTF-8''{filename}"
+    return response
 
 
 @swagger_auto_schema(

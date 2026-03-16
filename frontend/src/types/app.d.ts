@@ -392,6 +392,27 @@ declare namespace App {
             continue: string;
             createTime: string;
             creator: string;
+            detailAction: string;
+            detailAll: string;
+            detailBidNo: string;
+            detailClose: string;
+            detailComplete: string;
+            detailCreateRow: string;
+            detailDataDetail: string;
+            detailDownload: string;
+            detailDownloadSuccess: string;
+            detailDownloading: string;
+            detailEdit: string;
+            detailFieldDetail: string;
+            detailFieldName: string;
+            detailFieldValue: string;
+            detailKeyMatchRate: string;
+            detailMissing: string;
+            detailNoData: string;
+            detailPreview: string;
+            detailSourceHint: string;
+            detailTaskInfo: string;
+            detailView: string;
             executionLog: string;
             form: {
               creator: string;

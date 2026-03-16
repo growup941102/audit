@@ -7,6 +7,29 @@ import { backEndFail, handleError } from './error';
 import { getAuthorization } from './shared';
 import type { RequestInstanceState } from './type';
 
+function parseServiceSuccessCodes(rawValue: unknown) {
+  const defaultCodes = ['0000'];
+
+  if (Array.isArray(rawValue)) {
+    const values = rawValue.map(item => String(item).trim()).filter(Boolean);
+    return new Set(values.length ? values : defaultCodes);
+  }
+
+  if (rawValue == null) {
+    return new Set(defaultCodes);
+  }
+
+  const normalized = String(rawValue)
+    .replace(/[，；;|\s]+/g, ',')
+    .split(',')
+    .map(code => code.trim())
+    .filter(Boolean);
+
+  return new Set(normalized.length ? normalized : defaultCodes);
+}
+
+const serviceSuccessCodes = parseServiceSuccessCodes(import.meta.env.VITE_SERVICE_SUCCESS_CODE);
+
 export const request = createRequest<App.Service.Response, RequestInstanceState>(
   {
     baseURL: globalConfig.serviceBaseURL,
@@ -18,7 +41,8 @@ export const request = createRequest<App.Service.Response, RequestInstanceState>
     isBackendSuccess(response) {
       // when the backend response code is "0000"(default), it means the request is success
       // to change this logic by yourself, you can modify the `VITE_SERVICE_SUCCESS_CODE` in `.env` file
-      return String(response.data.code) === import.meta.env.VITE_SERVICE_SUCCESS_CODE;
+      // use "," to separate multiple success codes, e.g. "0000,200"
+      return serviceSuccessCodes.has(String(response.data.code));
     },
     async onBackendFail(response, instance) {
       await backEndFail(response, instance, request);

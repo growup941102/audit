@@ -26,6 +26,12 @@ export const QUERY_KEYS = {
     WATERMARK_SETTINGS: ['systemManage', 'watermarkSettings'] as const,
     WEBSITE_BRAND_SETTINGS: ['systemManage', 'websiteBrandSettings'] as const,
     WEBSITE_SETTINGS: ['systemManage', 'websiteSettings'] as const
+  },
+  // Data Schedule
+  DATA_SCHEDULE: {
+    EXTRACT_DRILLDOWN: (params: Api.DataSchedule.DrilldownParams | null) => ['dataSchedule', 'extractDrilldown', params] as const,
+    EXTRACT_FIELDS: (params: Api.DataSchedule.FieldListParams | null) => ['dataSchedule', 'extractFields', params] as const,
+    EXTRACT_SUMMARY: (taskId: string) => ['dataSchedule', 'extractSummary', taskId] as const
   }
 } as const;
 

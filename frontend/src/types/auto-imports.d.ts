@@ -34,6 +34,7 @@ declare global {
   const ARow: typeof import('antd')['Row']
   const ASegmented: typeof import('antd')['Segmented']
   const ASelect: typeof import('antd')['Select']
+  const ASkeleton: typeof import('antd')['Skeleton']
   const ASlider: typeof import('antd')['Slider']
   const ASpace: typeof import('antd')['Space']
   const ASpin: typeof import('antd')['Spin']
