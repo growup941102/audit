@@ -57,6 +57,8 @@ const PwdLogin = () => {
     setCaptchaLoading(true);
     try {
       const data = await fetchCaptcha();
+      console.log(data);
+      
       setCaptchaId(data.captchaId);
       setCaptchaImage(data.captchaImage);
       form.setFieldValue('captchaCode', '');
