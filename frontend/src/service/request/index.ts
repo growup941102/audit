@@ -11,7 +11,9 @@ function parseServiceSuccessCodes(rawValue: unknown) {
   const defaultCodes = ['0000'];
 
   if (Array.isArray(rawValue)) {
-    const values = rawValue.map(item => String(item).trim()).filter(Boolean);
+    const values = rawValue
+      .map(item => String(item).trim().replace(/^['"]|['"]$/g, ''))
+      .filter(Boolean);
     return new Set(values.length ? values : defaultCodes);
   }
 
@@ -19,10 +21,33 @@ function parseServiceSuccessCodes(rawValue: unknown) {
     return new Set(defaultCodes);
   }
 
-  const normalized = String(rawValue)
-    .replace(/[，；;|\s]+/g, ',')
+  const rawText = String(rawValue).trim();
+  if (!rawText) {
+    return new Set(defaultCodes);
+  }
+
+  const tryJsonParse = () => {
+    try {
+      const parsed = JSON.parse(rawText);
+      if (Array.isArray(parsed)) {
+        return parsed.map(item => String(item).trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const parsedFromJson = tryJsonParse();
+  if (parsedFromJson && parsedFromJson.length) {
+    return new Set(parsedFromJson);
+  }
+
+  const normalizedText = rawText.replace(/^\[|\]$/g, '');
+  const normalized = normalizedText
+    .replace(/[，；;|/\\\s]+/g, ',')
     .split(',')
-    .map(code => code.trim())
+    .map(code => code.trim().replace(/^['"]|['"]$/g, ''))
     .filter(Boolean);
 
   return new Set(normalized.length ? normalized : defaultCodes);

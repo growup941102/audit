@@ -392,6 +392,7 @@ declare namespace App {
             continue: string;
             createTime: string;
             creator: string;
+            deleteTodo: string;
             detailAction: string;
             detailAll: string;
             detailBidNo: string;
@@ -414,6 +415,26 @@ declare namespace App {
             detailTaskInfo: string;
             detailView: string;
             executionLog: string;
+            logComponent: string;
+            logCountLabel: string;
+            logCountUnit: string;
+            logExport: string;
+            logExportSuccess: string;
+            logFollowLatest: string;
+            logKeywordPlaceholder: string;
+            logLevel: string;
+            logLevelError: string;
+            logLevelInfo: string;
+            logLevelPlaceholder: string;
+            logLevelWarn: string;
+            logMessage: string;
+            logNoData: string;
+            logNodeName: string;
+            logProjectName: string;
+            logServiceName: string;
+            logTime: string;
+            logTitle: string;
+            logTotalLabel: string;
             form: {
               creator: string;
               matchRangeMax: string;

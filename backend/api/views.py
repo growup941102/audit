@@ -1,5 +1,6 @@
 import base64
 from collections import deque
+from datetime import datetime, timedelta
 import hashlib
 import hmac
 import io
@@ -142,6 +143,24 @@ DATA_SCHEDULE_SCOPE_SET = {
     DATA_SCHEDULE_SCOPE_COMPLETE,
     DATA_SCHEDULE_SCOPE_MISSING,
 }
+DATA_SCHEDULE_LOG_LEVEL_INFO = 'info'
+DATA_SCHEDULE_LOG_LEVEL_WARN = 'warn'
+DATA_SCHEDULE_LOG_LEVEL_ERROR = 'error'
+DATA_SCHEDULE_LOG_LEVEL_SET = {
+    DATA_SCHEDULE_LOG_LEVEL_INFO,
+    DATA_SCHEDULE_LOG_LEVEL_WARN,
+    DATA_SCHEDULE_LOG_LEVEL_ERROR,
+}
+DATA_SCHEDULE_LOG_ORDER_BY_TIME = 'time'
+DATA_SCHEDULE_LOG_ORDER_DIRECTION_ASC = 'asc'
+DATA_SCHEDULE_LOG_ORDER_DIRECTION_DESC = 'desc'
+DATA_SCHEDULE_LOG_ORDER_DIRECTION_SET = {
+    DATA_SCHEDULE_LOG_ORDER_DIRECTION_ASC,
+    DATA_SCHEDULE_LOG_ORDER_DIRECTION_DESC,
+}
+DATA_SCHEDULE_LOG_DEFAULT_COUNT = 100
+DATA_SCHEDULE_LOG_MAX_COUNT = 1000
+DATA_SCHEDULE_LOG_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
 
 
 def _parse_positive_int(value, default=1, max_value=200):
@@ -500,6 +519,222 @@ def _build_data_schedule_counts(fields):
     complete = len([item for item in fields if item.get('status') == DATA_SCHEDULE_SCOPE_COMPLETE])
     missing = len([item for item in fields if item.get('status') == DATA_SCHEDULE_SCOPE_MISSING])
     return {'all': len(fields), 'complete': complete, 'missing': missing}
+
+
+def _get_data_schedule_log_meta(task_id):
+    summary = _get_data_schedule_summary(task_id)
+    return {
+        'nodeName': 'node1',
+        'projectName': summary.get('projectName') or '',
+        'serviceName': '数据提取服务',
+        'taskId': task_id
+    }
+
+
+def _build_data_schedule_log_records(task_id):
+    # task_id is kept for future real data-source replacement.
+    _ = task_id
+
+    components = ['任务调度', '内容解析', '切片处理', '向量入库', '结构化提取', '数据检查', '结果整理', '结果归档']
+    info_templates = [
+        '任务已创建：{component}',
+        '{component}完成',
+        '{component}完成，进入下一阶段',
+        '{component}执行成功',
+    ]
+    warn_templates = [
+        '{component}耗时偏高，触发重试机制',
+        '{component}出现波动，已自动恢复',
+    ]
+    error_templates = [
+        '{component}失败，等待人工处理',
+        '{component}异常中断，请检查上游依赖',
+    ]
+
+    base_time = datetime(2026, 2, 4, 8, 0, 30)
+    records = []
+    for index in range(240):
+        timestamp = base_time + timedelta(minutes=3 * index)
+        component = components[index % len(components)]
+        level = DATA_SCHEDULE_LOG_LEVEL_INFO
+        message = info_templates[index % len(info_templates)].format(component=component)
+
+        if index % 29 == 0:
+            level = DATA_SCHEDULE_LOG_LEVEL_ERROR
+            message = error_templates[index % len(error_templates)].format(component=component)
+        elif index % 17 == 0:
+            level = DATA_SCHEDULE_LOG_LEVEL_WARN
+            message = warn_templates[index % len(warn_templates)].format(component=component)
+
+        records.append(
+            {
+                '_timestamp': timestamp,
+                'component': component,
+                'id': index + 1,
+                'level': level,
+                'message': message,
+                'time': timestamp.strftime(DATA_SCHEDULE_LOG_TIME_FORMAT)
+            }
+        )
+
+    return records
+
+
+def _parse_data_schedule_log_datetime(raw_value, *, end_of_day=False):
+    value = str(raw_value or '').strip()
+    if not value:
+        return None, ''
+
+    formats = [
+        '%Y-%m-%d %H:%M:%S',
+        '%Y-%m-%d %H:%M',
+        '%Y-%m-%d',
+    ]
+    for fmt in formats:
+        try:
+            parsed = datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+
+        if fmt == '%Y-%m-%d' and end_of_day:
+            parsed = parsed.replace(hour=23, minute=59, second=59)
+
+        return parsed, ''
+
+    return None, '时间格式错误，请使用 YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss'
+
+
+def _parse_data_schedule_log_filters(request):
+    level = str(request.query_params.get('level') or '').strip().lower()
+    if level and level not in DATA_SCHEDULE_LOG_LEVEL_SET:
+        return None, 'level 参数无效，仅支持 info/warn/error'
+
+    order_by = str(request.query_params.get('orderBy') or DATA_SCHEDULE_LOG_ORDER_BY_TIME).strip().lower()
+    if not order_by:
+        order_by = DATA_SCHEDULE_LOG_ORDER_BY_TIME
+    if order_by != DATA_SCHEDULE_LOG_ORDER_BY_TIME:
+        return None, 'orderBy 参数无效，仅支持 time'
+
+    order_direction = str(request.query_params.get('orderDirection') or DATA_SCHEDULE_LOG_ORDER_DIRECTION_DESC).strip().lower()
+    if not order_direction:
+        order_direction = DATA_SCHEDULE_LOG_ORDER_DIRECTION_DESC
+    if order_direction not in DATA_SCHEDULE_LOG_ORDER_DIRECTION_SET:
+        return None, 'orderDirection 参数无效，仅支持 asc/desc'
+
+    count = _parse_positive_int(
+        request.query_params.get('count'),
+        default=DATA_SCHEDULE_LOG_DEFAULT_COUNT,
+        max_value=DATA_SCHEDULE_LOG_MAX_COUNT
+    )
+    keyword = str(request.query_params.get('keyword') or '').strip()
+
+    start_time, start_error = _parse_data_schedule_log_datetime(request.query_params.get('startTime'))
+    if start_error:
+        return None, start_error
+    end_time, end_error = _parse_data_schedule_log_datetime(request.query_params.get('endTime'), end_of_day=True)
+    if end_error:
+        return None, end_error
+
+    if start_time and end_time and start_time > end_time:
+        return None, '开始时间不能晚于结束时间'
+
+    return {
+        'count': count,
+        'endTime': end_time,
+        'keyword': keyword,
+        'level': level,
+        'orderBy': order_by,
+        'orderDirection': order_direction,
+        'startTime': start_time
+    }, ''
+
+
+def _filter_data_schedule_logs(records, filters):
+    keyword = (filters.get('keyword') or '').lower()
+    level = filters.get('level') or ''
+    start_time = filters.get('startTime')
+    end_time = filters.get('endTime')
+
+    filtered = []
+    for record in records:
+        if level and record.get('level') != level:
+            continue
+
+        if keyword:
+            message = str(record.get('message') or '').lower()
+            component = str(record.get('component') or '').lower()
+            if keyword not in message and keyword not in component:
+                continue
+
+        record_time = record.get('_timestamp')
+        if start_time and record_time and record_time < start_time:
+            continue
+        if end_time and record_time and record_time > end_time:
+            continue
+
+        filtered.append(record)
+
+    return filtered
+
+
+def _sort_data_schedule_logs(records, order_direction):
+    reverse = order_direction != DATA_SCHEDULE_LOG_ORDER_DIRECTION_ASC
+    return sorted(records, key=lambda item: item.get('_timestamp') or datetime.min, reverse=reverse)
+
+
+def _serialize_data_schedule_logs(records):
+    return [
+        {
+            'component': record.get('component') or '',
+            'id': record.get('id'),
+            'level': record.get('level') or DATA_SCHEDULE_LOG_LEVEL_INFO,
+            'message': record.get('message') or '',
+            'time': record.get('time') or ''
+        }
+        for record in records
+    ]
+
+
+def _build_data_schedule_log_export_binary(task_meta, filters, records):
+    try:
+        from openpyxl import Workbook
+    except Exception as exc:
+        logger.exception('openpyxl import failed when export log: %s', exc)
+        raise
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = '数据提取日志'
+
+    worksheet.append(['字段', '内容'])
+    worksheet.append(['任务标识', task_meta.get('taskId') or ''])
+    worksheet.append(['项目名称', task_meta.get('projectName') or ''])
+    worksheet.append(['服务名称', task_meta.get('serviceName') or ''])
+    worksheet.append(['执行节点', task_meta.get('nodeName') or ''])
+    worksheet.append(['日志级别', filters.get('level') or '全部'])
+    worksheet.append(['排序方向', filters.get('orderDirection') or DATA_SCHEDULE_LOG_ORDER_DIRECTION_DESC])
+    worksheet.append(['查询条数', filters.get('count') or DATA_SCHEDULE_LOG_DEFAULT_COUNT])
+    worksheet.append(['开始时间', (filters.get('startTime') or '').strftime(DATA_SCHEDULE_LOG_TIME_FORMAT) if filters.get('startTime') else '--'])
+    worksheet.append(['结束时间', (filters.get('endTime') or '').strftime(DATA_SCHEDULE_LOG_TIME_FORMAT) if filters.get('endTime') else '--'])
+    worksheet.append(['关键字', filters.get('keyword') or '--'])
+    worksheet.append([])
+    worksheet.append(['时间', '组件', '等级', '日志'])
+
+    for record in records:
+        worksheet.append([
+            record.get('time') or '',
+            record.get('component') or '',
+            record.get('level') or DATA_SCHEDULE_LOG_LEVEL_INFO,
+            record.get('message') or '',
+        ])
+
+    worksheet.freeze_panes = 'A13'
+
+    output = io.BytesIO()
+    workbook.save(output)
+    workbook.close()
+    output.seek(0)
+    return output.getvalue()
 
 
 def _safe_excel_sheet_name(raw_name, used_names):
@@ -1664,6 +1899,105 @@ def export_data_schedule_extract_result(request, task_id):
         return error_response('导出失败，请稍后重试', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     filename = quote(f'data-schedule-{task_id}-{scope}.xlsx')
+    response = HttpResponse(
+        binary,
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = f"attachment; filename*=UTF-8''{filename}"
+    return response
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='获取数据调度日志元信息',
+    responses={200: '获取成功', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_data_schedule_logs_meta(_request, task_id):
+    return success_response(_get_data_schedule_log_meta(task_id), '获取成功')
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='获取数据调度日志列表（按条数查询）',
+    manual_parameters=[
+        openapi.Parameter('level', openapi.IN_QUERY, description='日志级别: info/warn/error', type=openapi.TYPE_STRING),
+        openapi.Parameter('keyword', openapi.IN_QUERY, description='日志关键字', type=openapi.TYPE_STRING),
+        openapi.Parameter('startTime', openapi.IN_QUERY, description='开始时间', type=openapi.TYPE_STRING),
+        openapi.Parameter('endTime', openapi.IN_QUERY, description='结束时间', type=openapi.TYPE_STRING),
+        openapi.Parameter('orderBy', openapi.IN_QUERY, description='排序字段，固定 time', type=openapi.TYPE_STRING),
+        openapi.Parameter('orderDirection', openapi.IN_QUERY, description='排序方向: asc/desc', type=openapi.TYPE_STRING),
+        openapi.Parameter(
+            'count',
+            openapi.IN_QUERY,
+            description=f'查询条数，默认{DATA_SCHEDULE_LOG_DEFAULT_COUNT}，最大{DATA_SCHEDULE_LOG_MAX_COUNT}',
+            type=openapi.TYPE_INTEGER
+        ),
+    ],
+    responses={200: '获取成功', 400: '参数错误', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_data_schedule_logs(request, task_id):
+    filters, err_msg = _parse_data_schedule_log_filters(request)
+    if err_msg:
+        return error_response(err_msg, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    records = _build_data_schedule_log_records(task_id)
+    filtered_records = _filter_data_schedule_logs(records, filters)
+    sorted_records = _sort_data_schedule_logs(filtered_records, filters.get('orderDirection'))
+    count = filters.get('count') or DATA_SCHEDULE_LOG_DEFAULT_COUNT
+    sliced_records = sorted_records[:count]
+
+    data = {
+        'count': count,
+        'records': _serialize_data_schedule_logs(sliced_records),
+        'total': len(sorted_records),
+    }
+    return success_response(data, '获取成功')
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='导出数据调度日志',
+    manual_parameters=[
+        openapi.Parameter('level', openapi.IN_QUERY, description='日志级别: info/warn/error', type=openapi.TYPE_STRING),
+        openapi.Parameter('keyword', openapi.IN_QUERY, description='日志关键字', type=openapi.TYPE_STRING),
+        openapi.Parameter('startTime', openapi.IN_QUERY, description='开始时间', type=openapi.TYPE_STRING),
+        openapi.Parameter('endTime', openapi.IN_QUERY, description='结束时间', type=openapi.TYPE_STRING),
+        openapi.Parameter('orderBy', openapi.IN_QUERY, description='排序字段，固定 time', type=openapi.TYPE_STRING),
+        openapi.Parameter('orderDirection', openapi.IN_QUERY, description='排序方向: asc/desc', type=openapi.TYPE_STRING),
+        openapi.Parameter(
+            'count',
+            openapi.IN_QUERY,
+            description=f'导出条数，默认{DATA_SCHEDULE_LOG_DEFAULT_COUNT}，最大{DATA_SCHEDULE_LOG_MAX_COUNT}',
+            type=openapi.TYPE_INTEGER
+        ),
+    ],
+    responses={200: '导出成功', 400: '参数错误', 500: '导出失败', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def export_data_schedule_logs(request, task_id):
+    filters, err_msg = _parse_data_schedule_log_filters(request)
+    if err_msg:
+        return error_response(err_msg, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    task_meta = _get_data_schedule_log_meta(task_id)
+    records = _build_data_schedule_log_records(task_id)
+    filtered_records = _filter_data_schedule_logs(records, filters)
+    sorted_records = _sort_data_schedule_logs(filtered_records, filters.get('orderDirection'))
+    count = filters.get('count') or DATA_SCHEDULE_LOG_DEFAULT_COUNT
+    sliced_records = sorted_records[:count]
+
+    try:
+        binary = _build_data_schedule_log_export_binary(task_meta, filters, sliced_records)
+    except Exception:
+        logger.exception('build data schedule logs export failed, task_id=%s', task_id)
+        return error_response('导出失败，请稍后重试', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    filename = quote(f'data-schedule-log-{task_id}.xlsx')
     response = HttpResponse(
         binary,
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'

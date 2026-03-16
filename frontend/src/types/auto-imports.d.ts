@@ -71,6 +71,7 @@ declare global {
   const IconIcRoundReplay: typeof import('~icons/ic/round-replay.tsx')['default']
   const IconIcRoundSearch: typeof import('~icons/ic/round-search.tsx')['default']
   const IconIcRoundStop: typeof import('~icons/ic/round-stop.tsx')['default']
+  const IconIcRoundVerticalAlignBottom: typeof import('~icons/ic/round-vertical-align-bottom.tsx')['default']
   const IconLocalBanner: typeof import('~icons/local/banner.tsx')['default']
   const IconLocalLogo: typeof import('~icons/local/logo.tsx')['default']
   const IconMdiArrowDownThin: typeof import('~icons/mdi/arrow-down-thin.tsx')['default']

@@ -25,6 +25,21 @@ urlpatterns = [
         views.export_data_schedule_extract_result,
         name='export_data_schedule_extract_result'
     ),
+    path(
+        'data-schedule/tasks/<str:task_id>/logs/meta/',
+        views.get_data_schedule_logs_meta,
+        name='get_data_schedule_logs_meta'
+    ),
+    path(
+        'data-schedule/tasks/<str:task_id>/logs/',
+        views.get_data_schedule_logs,
+        name='get_data_schedule_logs'
+    ),
+    path(
+        'data-schedule/tasks/<str:task_id>/logs/export/',
+        views.export_data_schedule_logs,
+        name='export_data_schedule_logs'
+    ),
     path('system-manage/website-settings/upload/', views.upload_website_image, name='upload_website_image'),
     path('system-manage/website-settings/', views.get_website_settings, name='get_website_settings'),
     path('system-manage/website-settings/update/', views.update_website_settings, name='update_website_settings'),

@@ -4,6 +4,7 @@ import { TableHeaderOperation, useTable, useTableOperate } from '@/features/tabl
 
 import ScheduleCreateView from './modules/ScheduleCreateView';
 import ScheduleDetailView from './modules/ScheduleDetailView';
+import ScheduleLogModal from './modules/ScheduleLogModal';
 import ScheduleSearch from './modules/ScheduleSearch';
 import type { RecordWithIndex, ScheduleSearchParams } from './modules/mock';
 import { PAGE_SIZE, fetchScheduleList } from './modules/mock';
@@ -39,6 +40,7 @@ const DataSchedule = () => {
   const scrollY = wrapperSize?.height ? wrapperSize.height - 55 : undefined;
 
   const isMobile = useMobile();
+  const [logModalTask, setLogModalTask] = useState<{ projectName: string; taskId: string } | null>(null);
 
   const { columnChecks, data, run, searchProps, setColumnChecks, tableProps } = useTable({
     apiFn: fetchScheduleList,
@@ -152,7 +154,20 @@ const DataSchedule = () => {
                     key: 'delete',
                     label: t('common.delete')
                   }
-                ]
+                ],
+                onClick: ({ key }) => {
+                  if (key === 'log') {
+                    setLogModalTask({
+                      projectName: record.projectName,
+                      taskId: record.taskId
+                    });
+                    return;
+                  }
+
+                  if (key === 'delete') {
+                    window.$message?.info(t('page.dataSchedule.deleteTodo'));
+                  }
+                }
               }}
             >
               <AButton size="small">{t('page.dataSchedule.more')}</AButton>
@@ -391,6 +406,13 @@ const DataSchedule = () => {
           />
         </div>
       </ACard>
+
+      <ScheduleLogModal
+        open={Boolean(logModalTask)}
+        projectName={logModalTask?.projectName}
+        taskId={logModalTask?.taskId || ''}
+        onCancel={() => setLogModalTask(null)}
+      />
     </div>
   );
 };

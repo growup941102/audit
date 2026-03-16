@@ -1,6 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 
-import { fetchDataScheduleExtractDrilldown, fetchDataScheduleExtractFields, fetchDataScheduleExtractSummary } from '../api';
+import {
+  fetchDataScheduleExtractDrilldown,
+  fetchDataScheduleExtractFields,
+  fetchDataScheduleExtractSummary,
+  fetchDataScheduleLogs,
+  fetchDataScheduleLogsMeta
+} from '../api';
 import { QUERY_KEYS } from '../keys';
 
 /** get extract result summary hook */
@@ -28,5 +34,23 @@ export function useDataScheduleExtractDrilldown(params: Api.DataSchedule.Drilldo
     queryFn: () => fetchDataScheduleExtractDrilldown(params as Api.DataSchedule.DrilldownParams),
     queryKey: QUERY_KEYS.DATA_SCHEDULE.EXTRACT_DRILLDOWN(params),
     retry: false
+  });
+}
+
+/** get schedule logs meta hook */
+export function useDataScheduleLogsMeta(taskId: string | null | undefined) {
+  return useQuery({
+    enabled: Boolean(taskId),
+    queryFn: () => fetchDataScheduleLogsMeta(taskId as string),
+    queryKey: QUERY_KEYS.DATA_SCHEDULE.LOG_META(taskId || '')
+  });
+}
+
+/** get schedule logs list hook */
+export function useDataScheduleLogs(params: Api.DataSchedule.TaskLogListParams | null) {
+  return useQuery({
+    enabled: Boolean(params?.taskId),
+    queryFn: () => fetchDataScheduleLogs(params as Api.DataSchedule.TaskLogListParams),
+    queryKey: QUERY_KEYS.DATA_SCHEDULE.LOG_LIST(params)
   });
 }

@@ -81,5 +81,43 @@ declare namespace Api {
       scope?: Scope;
       taskId: string;
     };
+
+    type LogLevel = 'error' | 'info' | 'warn';
+    type LogOrderBy = 'time';
+    type LogOrderDirection = 'asc' | 'desc';
+
+    type TaskLogMeta = {
+      nodeName: string;
+      projectName: string;
+      serviceName: string;
+      taskId: string;
+    };
+
+    type TaskLogRecord = {
+      component: string;
+      id: number;
+      level: LogLevel;
+      message: string;
+      time: string;
+    };
+
+    type TaskLogListParams = {
+      count?: number;
+      endTime?: string;
+      keyword?: string;
+      level?: LogLevel;
+      orderBy?: LogOrderBy;
+      orderDirection?: LogOrderDirection;
+      startTime?: string;
+      taskId: string;
+    };
+
+    type TaskLogList = {
+      count: number;
+      records: TaskLogRecord[];
+      total: number;
+    };
+
+    type TaskLogExportParams = TaskLogListParams;
   }
 }
