@@ -1,0 +1,64 @@
+services:
+  db:
+    image: mysql:8.4
+    container_name: audit-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-audit_agent}
+      TZ: ${TZ:-Asia/Shanghai}
+    command:
+      - --default-time-zone=+8:00
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "${MYSQL_PORT_EXPOSE:-33603}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    networks:
+      - audit-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: audit-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DEBUG: ${DEBUG:-0}
+      SECRET_KEY: ${SECRET_KEY:-please-change-secret-key}
+      MYSQL_HOST: ${MYSQL_HOST:-db}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-audit_agent}
+      MYSQL_USERNAME: ${MYSQL_USERNAME:-root}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-root123}
+      MINIO_ENABLED: ${MINIO_ENABLED:-0}
+      INIT_CREATE_SUPERUSER: ${INIT_CREATE_SUPERUSER:-1}
+      INIT_ADMIN_USERNAME: ${INIT_ADMIN_USERNAME:-admin}
+      INIT_ADMIN_PASSWORD: ${INIT_ADMIN_PASSWORD:-cmcc@tj10086}
+      INIT_ADMIN_EMAIL: ${INIT_ADMIN_EMAIL:-admin@example.com}
+      TZ: ${TZ:-Asia/Shanghai}
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py init_auth_data &&
+             python manage.py runserver 0.0.0.0:8000"
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    networks:
+      - audit-net
+
+volumes:
+  mysql-data:
+
+networks:
+  audit-net:
+    driver: bridge
