@@ -10,9 +10,9 @@ interface KpiItemProps {
   value: number;
 }
 
-function useGetKpiData(summary?: Api.DataOverview.ProjectStatusSummary): KpiItemProps[] {
+function useGetKpiData(summary: Api.DataOverview.ProjectStatusSummary): KpiItemProps[] {
   const { t } = useTranslation();
-  const totalProjects = summary?.totalProjects || 0;
+  const totalProjects = summary.totalProjects;
 
   function calcPercent(value: number) {
     if (!totalProjects) return 0;
@@ -23,38 +23,38 @@ function useGetKpiData(summary?: Api.DataOverview.ProjectStatusSummary): KpiItem
     {
       color: '#52c41a',
       key: 'completed',
-      percent: calcPercent(summary?.successProjects || 0),
+      percent: calcPercent(summary.successProjects),
       percentLabel: t('page.dataOverview.completionRate'),
       title: t('page.dataOverview.completedTasks'),
       total: totalProjects,
-      value: summary?.successProjects || 0
+      value: summary.successProjects
     },
     {
       color: '#faad14',
       key: 'running',
-      percent: calcPercent(summary?.runningProjects || 0),
+      percent: calcPercent(summary.runningProjects),
       percentLabel: t('page.dataOverview.runningRate'),
       title: t('page.dataOverview.runningTasks'),
       total: totalProjects,
-      value: summary?.runningProjects || 0
+      value: summary.runningProjects
     },
     {
       color: '#4375e6',
       key: 'remaining',
-      percent: calcPercent(summary?.pendingProjects || 0),
+      percent: calcPercent(summary.pendingProjects),
       percentLabel: t('page.dataOverview.remainingRate'),
       title: t('page.dataOverview.remainingTasks'),
       total: totalProjects,
-      value: summary?.pendingProjects || 0
+      value: summary.pendingProjects
     },
     {
       color: '#f5222d',
       key: 'abnormal',
-      percent: calcPercent(summary?.failedProjects || 0),
+      percent: calcPercent(summary.failedProjects),
       percentLabel: t('page.dataOverview.abnormalRate'),
       title: t('page.dataOverview.abnormalTasks'),
       total: totalProjects,
-      value: summary?.failedProjects || 0
+      value: summary.failedProjects
     }
   ];
 
@@ -105,6 +105,17 @@ const KpiCardItem = (item: KpiItemProps) => {
 
 const KpiCards = () => {
   const summaryQuery = useProjectStatusSummary();
+  if (summaryQuery.error) {
+    throw summaryQuery.error;
+  }
+  if (!summaryQuery.data) {
+    return (
+      <ACard variant="borderless">
+        <AEmpty description="暂无可展示数据" />
+      </ACard>
+    );
+  }
+
   const kpiList = useGetKpiData(summaryQuery.data);
 
   return (

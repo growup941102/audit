@@ -10,6 +10,7 @@ interface Props {
 }
 
 const ScheduleCreateView = ({ onCancel, onCreate }: Props) => {
+  const hasRealCatalogData = dataCatalogs.length > 0;
   const [chooseModalOpen, setChooseModalOpen] = useState(false);
   const [activeCatalogId, setActiveCatalogId] = useState(dataCatalogs[0]?.id || '');
   const [selectedNodeMap, setSelectedNodeMap] = useState<Record<string, React.Key[]>>({});
@@ -34,6 +35,10 @@ const ScheduleCreateView = ({ onCancel, onCreate }: Props) => {
   const currentCheckedKeys = draftSelectedNodeMap[draftCatalogId] || [];
 
   function openChooseModal() {
+    if (!hasRealCatalogData) {
+      window.$message?.error('数据目录真实接口未接入，前端 mock 数据已移除');
+      return;
+    }
     setDraftCatalogId(activeCatalogId);
     setDraftSelectedNodeMap(selectedNodeMap);
     setChooseModalOpen(true);
@@ -160,7 +165,7 @@ const ScheduleCreateView = ({ onCancel, onCreate }: Props) => {
         </div>
 
         <p className="m-0 max-w-620px text-15px leading-24px text-[#334155]">
-          配置数据目录与项目后创建任务。当前页面仅为前端交互原型，后续可直接对接后端数据源接口。
+          配置数据目录与项目后创建任务。当前仅支持真实后端数据源，未接入时将直接报错。
         </p>
 
         <ACard

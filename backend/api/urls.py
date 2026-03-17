@@ -80,6 +80,11 @@ urlpatterns = [
         views.get_data_schedule_export_debug_logs,
         name='get_data_schedule_export_debug_logs'
     ),
+    path(
+        'admin/logs/api-failures/',
+        views.get_api_failure_logs,
+        name='get_api_failure_logs'
+    ),
     path('system-manage/website-settings/upload/', views.upload_website_image, name='upload_website_image'),
     path('system-manage/website-settings/', views.get_website_settings, name='get_website_settings'),
     path('system-manage/website-settings/update/', views.update_website_settings, name='update_website_settings'),

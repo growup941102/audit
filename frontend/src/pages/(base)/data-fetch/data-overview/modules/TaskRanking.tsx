@@ -74,12 +74,17 @@ const TaskRanking = () => {
     [rankingQuery.data?.records]
   );
 
-  const { leftList, rightList } = useMemo(() => {
-    const full: RankItemData[] = Array.from({ length: 20 }, (_, i) => {
-      return rankingData[i] || { name: '-', rank: i + 1 };
-    });
-    return { leftList: full.slice(0, 10), rightList: full.slice(10, 20) };
-  }, [rankingData]);
+  if (rankingQuery.error) {
+    throw rankingQuery.error;
+  }
+
+  const { leftList, rightList } = useMemo(
+    () => ({
+      leftList: rankingData.slice(0, 10),
+      rightList: rankingData.slice(10, 20)
+    }),
+    [rankingData]
+  );
 
   const [refreshing, { setFalse: stopRefreshing, setTrue: startRefreshing }] = useBoolean(false);
 
@@ -151,6 +156,11 @@ const TaskRanking = () => {
               ))}
             </ACol>
           </ARow>
+          {!loading && rankingData.length === 0 ? (
+            <div className="pt-24px">
+              <AEmpty description="暂无可展示数据" />
+            </div>
+          ) : null}
         </div>
       </ASpin>
       <div className="mt-8px flex justify-center">

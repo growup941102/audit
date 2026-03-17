@@ -166,7 +166,9 @@ DATA_SCHEDULE_FIELD_VALUE_MAX_LENGTH = 5000
 DATA_SCHEDULE_DRILLDOWN_ROW_VALUE_MAX_LENGTH = 2000
 DATA_SCHEDULE_EXPORT_LOG_DIR = Path(__file__).resolve().parents[1] / 'logs'
 DATA_SCHEDULE_EXPORT_LOG_FILE = DATA_SCHEDULE_EXPORT_LOG_DIR / 'data_schedule_export.log'
+API_FAILURE_LOG_FILE = DATA_SCHEDULE_EXPORT_LOG_DIR / 'api_failure.log'
 DATA_SCHEDULE_FIELD_OVERRIDE_STORE = {}
+DATA_SCHEDULE_REAL_SOURCE_ERROR = '数据调度真实数据源未接入，mock 兜底数据已移除'
 
 PROJECT_STATUS_RUNNING_TASK_SET = {'RUNNING', 'CLAIMED', 'LOCKED'}
 PROJECT_STATUS_FAILED_TASK_SET = {'FAILED', 'CANCELLED'}
@@ -648,6 +650,33 @@ def _read_data_schedule_export_log_records(limit, keyword=''):
     return records[-limit:]
 
 
+def _read_api_failure_log_records(limit, keyword=''):
+    if not API_FAILURE_LOG_FILE.exists():
+        return []
+
+    normalized_keyword = str(keyword or '').strip().lower()
+    records = []
+    with API_FAILURE_LOG_FILE.open('r', encoding='utf-8') as log_file:
+        for line in log_file:
+            raw_line = line.strip()
+            if not raw_line:
+                continue
+            if normalized_keyword and normalized_keyword not in raw_line.lower():
+                continue
+            try:
+                records.append(json.loads(raw_line))
+            except json.JSONDecodeError:
+                records.append({'raw': raw_line})
+
+    if limit <= 0:
+        return records
+    return records[-limit:]
+
+
+def _raise_data_schedule_real_source_error():
+    raise RuntimeError(DATA_SCHEDULE_REAL_SOURCE_ERROR)
+
+
 def _build_data_schedule_mock_fields():
     fields = [
         {
@@ -961,28 +990,13 @@ DATA_SCHEDULE_DRILLDOWN_MOCK = {
 
 
 def _get_data_schedule_summary(task_id):
-    return {
-        'bidNo': 'CG1201002025044003(1)',
-        'createTime': '2026-02-04 15:51:30',
-        'creator': '管理员',
-        'progress': 100,
-        'projectName': '道桥中心2025年度道路挖掘损害修复项目',
-        'status': 'success',
-        'taskId': task_id,
-    }
+    _ = task_id
+    _raise_data_schedule_real_source_error()
 
 
 def _get_data_schedule_fields(task_id):
-    fields = _build_data_schedule_mock_fields()
-    task_overrides = DATA_SCHEDULE_FIELD_OVERRIDE_STORE.get(task_id) or {}
-    if not task_overrides:
-        return fields
-
-    for field in fields:
-        field_key = field.get('fieldKey') or ''
-        if field_key and field_key in task_overrides:
-            field['fieldValueDisplay'] = task_overrides[field_key]
-    return fields
+    _ = task_id
+    _raise_data_schedule_real_source_error()
 
 
 def _update_data_schedule_field_value(task_id, field_key, field_value):
@@ -1073,62 +1087,13 @@ def _build_data_schedule_counts(fields):
 
 
 def _get_data_schedule_log_meta(task_id):
-    summary = _get_data_schedule_summary(task_id)
-    return {
-        'nodeName': 'node1',
-        'projectName': summary.get('projectName') or '',
-        'serviceName': '数据提取服务',
-        'taskId': task_id
-    }
+    _ = task_id
+    _raise_data_schedule_real_source_error()
 
 
 def _build_data_schedule_log_records(task_id):
-    # task_id is kept for future real data-source replacement.
     _ = task_id
-
-    components = ['任务调度', '内容解析', '切片处理', '向量入库', '结构化提取', '数据检查', '结果整理', '结果归档']
-    info_templates = [
-        '任务已创建：{component}',
-        '{component}完成',
-        '{component}完成，进入下一阶段',
-        '{component}执行成功',
-    ]
-    warn_templates = [
-        '{component}耗时偏高，触发重试机制',
-        '{component}出现波动，已自动恢复',
-    ]
-    error_templates = [
-        '{component}失败，等待人工处理',
-        '{component}异常中断，请检查上游依赖',
-    ]
-
-    base_time = datetime(2026, 2, 4, 8, 0, 30)
-    records = []
-    for index in range(240):
-        timestamp = base_time + timedelta(minutes=3 * index)
-        component = components[index % len(components)]
-        level = DATA_SCHEDULE_LOG_LEVEL_INFO
-        message = info_templates[index % len(info_templates)].format(component=component)
-
-        if index % 29 == 0:
-            level = DATA_SCHEDULE_LOG_LEVEL_ERROR
-            message = error_templates[index % len(error_templates)].format(component=component)
-        elif index % 17 == 0:
-            level = DATA_SCHEDULE_LOG_LEVEL_WARN
-            message = warn_templates[index % len(warn_templates)].format(component=component)
-
-        records.append(
-            {
-                '_timestamp': timestamp,
-                'component': component,
-                'id': index + 1,
-                'level': level,
-                'message': message,
-                'time': timestamp.strftime(DATA_SCHEDULE_LOG_TIME_FORMAT)
-            }
-        )
-
-    return records
+    _raise_data_schedule_real_source_error()
 
 
 def _parse_data_schedule_log_datetime(raw_value, *, end_of_day=False):
@@ -3142,6 +3107,29 @@ def get_data_schedule_export_debug_logs(request):
     records = _read_data_schedule_export_log_records(lines, keyword)
     data = {
         'file': str(DATA_SCHEDULE_EXPORT_LOG_FILE),
+        'records': records,
+        'total': len(records)
+    }
+    return success_response(data, '获取成功')
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='获取后端 API 失败日志（接口调用失败追踪）',
+    manual_parameters=[
+        openapi.Parameter('lines', openapi.IN_QUERY, description='返回日志行数，默认200，最大2000', type=openapi.TYPE_INTEGER),
+        openapi.Parameter('keyword', openapi.IN_QUERY, description='关键字过滤（可选）', type=openapi.TYPE_STRING),
+    ],
+    responses={200: '获取成功', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_api_failure_logs(request):
+    lines = _parse_positive_int(request.query_params.get('lines'), default=200, max_value=2000)
+    keyword = str(request.query_params.get('keyword') or '').strip()
+    records = _read_api_failure_log_records(lines, keyword)
+    data = {
+        'file': str(API_FAILURE_LOG_FILE),
         'records': records,
         'total': len(records)
     }

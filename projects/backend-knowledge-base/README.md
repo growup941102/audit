@@ -12,6 +12,7 @@
 - `backend-overview.md`：后端整体架构、运行方式与主要入口
 - `api-module-map.md`：`backend/api` Django 应用的职责地图
 - `frontend-backend-contracts.md`：当前前后端接口契约说明
+- `ai-audit-agent-reference.md`：`gxxm/ai-audit-agent` 数据库、状态接口、Nacos 配置参考
 
 ## 推荐使用方式
 1. 开始新的后端需求前，先读 `backend-overview.md`。
@@ -25,4 +26,3 @@
 - 需要使用 MCP 时，需要先说明用途、输入和预期输出。
 - 后端有改动时，需要同步补充文档，说明新增文件、修改文件以及代码用途。
 - 默认使用中文沟通，并优先使用中文撰写项目文档。
-

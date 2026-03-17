@@ -53,6 +53,13 @@
   - `project status` 用于单项目状态详情（状态标签、步骤、错误、文件统计）。
   - `ranking` 用于概览 TOP20（按 `category` + 时间范围过滤）。
 
+### 失败日志相关
+- 后端接口包括：
+  - `/api/admin/logs/api-failures/`
+- 约定说明：
+  - 所有 `/api/` 路径接口失败会写入 `backend/logs/api_failure.log`。
+  - 可通过日志接口按 `lines/keyword` 读取失败记录。
+
 ## 5. 契约维护检查清单
 - 后端字段名变化时，同步更新前端请求/响应类型定义。
 - 后端路径变化时，同步更新前端 URL 常量与 service 封装。
