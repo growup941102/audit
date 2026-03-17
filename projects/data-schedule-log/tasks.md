@@ -32,6 +32,8 @@
 - [ ] 前端页面流程验证（打开弹窗、筛选、排序、导出）
 - [x] 后端接口参数与错误场景验证
 - [ ] 手工验证导出文件内容
+- [x] 增加导出调试日志落盘（`backend/logs/data_schedule_export.log`）
+- [x] 增加导出调试日志读取接口（`/api/data-schedule/export-debug-logs/`）
 
 ## 6. 交付
 - [x] 总结变更文件及其用途

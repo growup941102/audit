@@ -1,6 +1,12 @@
 import type { ColumnsType } from "antd/es/table";
 
-import { fetchDataScheduleExtractExport } from "@/service/api";
+import {
+  createDataScheduleDrilldownRow,
+  deleteDataScheduleDrilldownRow,
+  fetchDataScheduleExtractExport,
+  updateDataScheduleDrilldownRow,
+  updateDataScheduleExtractField,
+} from "@/service/api";
 import {
   useDataScheduleExtractDrilldown,
   useDataScheduleExtractFields,
@@ -43,6 +49,13 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
   const [drilldownFieldKey, setDrilldownFieldKey] = useState("");
   const [drilldownCurrent, setDrilldownCurrent] = useState(1);
   const [downloading, setDownloading] = useState(false);
+  const [editingField, setEditingField] = useState<{ fieldKey: string; fieldName: string } | null>(null);
+  const [editingFieldValue, setEditingFieldValue] = useState("");
+  const [savingField, setSavingField] = useState(false);
+  const [drilldownRowModal, setDrilldownRowModal] = useState<{ mode: "create" | "edit"; rowId?: number } | null>(null);
+  const [savingDrilldownRow, setSavingDrilldownRow] = useState(false);
+  const [deletingDrilldownRowId, setDeletingDrilldownRowId] = useState<number | null>(null);
+  const [drilldownRowForm] = AForm.useForm<Record<string, string>>();
 
   const summaryQuery = useDataScheduleExtractSummary(taskId);
   const fieldsQuery = useDataScheduleExtractFields({
@@ -69,6 +82,15 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
   const counts = summary?.counts ||
     fieldList?.counts || { all: 0, complete: 0, missing: 0 };
   const isDrilldownOpen = Boolean(drilldownFieldKey);
+  const isEditModalOpen = Boolean(editingField);
+  const isDrilldownRowModalOpen = Boolean(drilldownRowModal);
+
+  useEffect(() => {
+    setEditingField(null);
+    setEditingFieldValue("");
+    setDrilldownRowModal(null);
+    drilldownRowForm.resetFields();
+  }, [taskId]);
 
   const fieldColumns = useMemo<ColumnsType<Api.DataSchedule.FieldRecord>>(
     () => [
@@ -115,6 +137,14 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
             disabled={!record.canEdit}
             size="small"
             type="link"
+            onClick={() => {
+              if (!record.canEdit) return;
+              setEditingField({
+                fieldKey: record.fieldKey,
+                fieldName: record.fieldName
+              });
+              setEditingFieldValue(record.fieldValueDisplay ?? "");
+            }}
           >
             {t("page.dataSchedule.detailEdit")}
           </AButton>
@@ -129,6 +159,8 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
   const drilldownColumns = useMemo<
     ColumnsType<Api.DataSchedule.DrilldownRecord>
   >(() => {
+    const canEdit = Boolean(drilldown?.actions?.canEdit);
+    const canDelete = Boolean(drilldown?.actions?.canDelete);
     const dynamicColumns: ColumnsType<Api.DataSchedule.DrilldownRecord> = (
       drilldown?.columns || []
     ).map((column) => ({
@@ -141,14 +173,33 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
     dynamicColumns.push({
       align: "center",
       key: "__actions",
-      render: () => (
+      render: (_, record) => (
         <div className="flex-center gap-8px">
-          <AButton className="px-0!" size="small" type="link">
+          <AButton
+            className="px-0!"
+            disabled={!canEdit}
+            size="small"
+            type="link"
+            onClick={() => openEditDrilldownRowModal(record)}
+          >
             {t("page.dataSchedule.detailEdit")}
           </AButton>
-          <AButton danger className="px-0!" size="small" type="link">
-            {t("common.delete")}
-          </AButton>
+          <APopconfirm
+            disabled={!canDelete}
+            title={t("common.confirmDelete")}
+            onConfirm={() => handleDeleteDrilldownRow(record)}
+          >
+            <AButton
+              danger
+              className="px-0!"
+              disabled={!canDelete}
+              loading={deletingDrilldownRowId === parseRowId(record)}
+              size="small"
+              type="link"
+            >
+              {t("common.delete")}
+            </AButton>
+          </APopconfirm>
         </div>
       ),
       title: t("page.dataSchedule.detailAction"),
@@ -156,17 +207,126 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
     });
 
     return dynamicColumns;
-  }, [drilldown?.columns, t]);
+  }, [deletingDrilldownRowId, drilldown?.actions?.canDelete, drilldown?.actions?.canEdit, drilldown?.columns, t]);
 
   function closeDrilldown() {
     setDrilldownFieldKey("");
     setDrilldownCurrent(1);
+    setDrilldownRowModal(null);
+    drilldownRowForm.resetFields();
   }
 
   function handleSwitchScope(nextScope: Api.DataSchedule.Scope) {
     setScope(nextScope);
     setFieldCurrent(1);
     closeDrilldown();
+  }
+
+  function parseRowId(record: Api.DataSchedule.DrilldownRecord) {
+    const rawId = record.id;
+    const parsed = Number(rawId);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return Math.trunc(parsed);
+  }
+
+  function openCreateDrilldownRowModal() {
+    const columns = drilldown?.columns || [];
+    const initialValues: Record<string, string> = {};
+    columns.forEach(column => {
+      initialValues[column.key] = "";
+    });
+    drilldownRowForm.setFieldsValue(initialValues);
+    setDrilldownRowModal({ mode: "create" });
+  }
+
+  function openEditDrilldownRowModal(record: Api.DataSchedule.DrilldownRecord) {
+    const rowId = parseRowId(record);
+    if (!rowId) {
+      window.$message?.error(t("common.error"));
+      return;
+    }
+
+    const columns = drilldown?.columns || [];
+    const editValues: Record<string, string> = {};
+    columns.forEach(column => {
+      const value = record[column.key];
+      editValues[column.key] = value == null ? "" : String(value);
+    });
+    drilldownRowForm.setFieldsValue(editValues);
+    setDrilldownRowModal({ mode: "edit", rowId });
+  }
+
+  function closeDrilldownRowModal() {
+    setDrilldownRowModal(null);
+    drilldownRowForm.resetFields();
+  }
+
+  async function handleSaveDrilldownRow() {
+    if (!drilldownFieldKey || !drilldownRowModal) return;
+
+    try {
+      const values = await drilldownRowForm.validateFields();
+      const rowData: Api.DataSchedule.DrilldownRowPayload = {};
+      Object.keys(values).forEach(key => {
+        rowData[key] = values[key];
+      });
+
+      setSavingDrilldownRow(true);
+      if (drilldownRowModal.mode === "create") {
+        await createDataScheduleDrilldownRow({
+          fieldKey: drilldownFieldKey,
+          rowData,
+          taskId
+        });
+        window.$message?.success(t("page.dataSchedule.detailCreateRowSuccess"));
+      } else {
+        await updateDataScheduleDrilldownRow({
+          fieldKey: drilldownFieldKey,
+          rowData,
+          rowId: drilldownRowModal.rowId as number,
+          taskId
+        });
+        window.$message?.success(t("page.dataSchedule.detailUpdateRowSuccess"));
+      }
+      await drilldownQuery.refetch();
+      closeDrilldownRowModal();
+    } catch (error) {
+      if (typeof error === "object" && error && "errorFields" in error) {
+        return;
+      }
+      const message = error instanceof Error ? error.message : t("common.error");
+      if (message) {
+        window.$message?.error(message);
+      }
+    } finally {
+      setSavingDrilldownRow(false);
+    }
+  }
+
+  async function handleDeleteDrilldownRow(record: Api.DataSchedule.DrilldownRecord) {
+    if (!drilldownFieldKey) return;
+
+    const rowId = parseRowId(record);
+    if (!rowId) {
+      window.$message?.error(t("common.error"));
+      return;
+    }
+
+    try {
+      setDeletingDrilldownRowId(rowId);
+      await deleteDataScheduleDrilldownRow({
+        fieldKey: drilldownFieldKey,
+        rowId,
+        taskId
+      });
+      await drilldownQuery.refetch();
+      window.$message?.success(t("page.dataSchedule.detailDeleteRowSuccess"));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("common.error");
+      window.$message?.error(message);
+    } finally {
+      setDeletingDrilldownRowId(null);
+    }
   }
 
   async function handleDownload() {
@@ -188,6 +348,32 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
       window.$message?.error(message);
     } finally {
       setDownloading(false);
+    }
+  }
+
+  function closeEditFieldModal() {
+    setEditingField(null);
+    setEditingFieldValue("");
+  }
+
+  async function handleSaveEditField() {
+    if (!editingField) return;
+
+    try {
+      setSavingField(true);
+      await updateDataScheduleExtractField({
+        fieldKey: editingField.fieldKey,
+        fieldValue: editingFieldValue,
+        taskId
+      });
+      await fieldsQuery.refetch();
+      window.$message?.success(t("page.dataSchedule.detailEditSaved"));
+      closeEditFieldModal();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("common.error");
+      window.$message?.error(message);
+    } finally {
+      setSavingField(false);
     }
   }
 
@@ -415,7 +601,11 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
           <span className="text-13px text-[#94a3b8]">
             {t("page.dataSchedule.detailSourceHint")}
           </span>
-          <AButton disabled size="small">
+          <AButton
+            disabled={!drilldown?.actions?.canCreate}
+            size="small"
+            onClick={openCreateDrilldownRowModal}
+          >
             {t("page.dataSchedule.detailCreateRow")}
           </AButton>
         </div>
@@ -438,6 +628,70 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
           scroll={{ x: "max-content", y: 420 }}
           size="small"
         />
+      </AModal>
+
+      <AModal
+        destroyOnClose
+        open={isEditModalOpen}
+        title={t("page.dataSchedule.detailEditFieldTitle", { fieldName: editingField?.fieldName || "" })}
+        width="min(980px, calc(100vw - 24px))"
+        footer={
+          <div className="flex justify-end gap-8px">
+            <AButton onClick={closeEditFieldModal}>{t("common.cancel")}</AButton>
+            <AButton loading={savingField} type="primary" onClick={handleSaveEditField}>
+              {t("page.dataSchedule.detailSave")}
+            </AButton>
+          </div>
+        }
+        onCancel={closeEditFieldModal}
+      >
+        <AInput.TextArea
+          autoSize={{ maxRows: 12, minRows: 8 }}
+          placeholder={t("page.dataSchedule.detailEditPlaceholder")}
+          value={editingFieldValue}
+          onChange={event => setEditingFieldValue(event.target.value)}
+        />
+      </AModal>
+
+      <AModal
+        destroyOnClose
+        open={isDrilldownRowModalOpen}
+        title={
+          drilldownRowModal?.mode === "create"
+            ? t("page.dataSchedule.detailDrilldownCreateRowTitle")
+            : t("page.dataSchedule.detailDrilldownEditRowTitle")
+        }
+        width="min(860px, calc(100vw - 24px))"
+        footer={
+          <div className="flex justify-end gap-8px">
+            <AButton onClick={closeDrilldownRowModal}>{t("common.cancel")}</AButton>
+            <AButton loading={savingDrilldownRow} type="primary" onClick={handleSaveDrilldownRow}>
+              {t("page.dataSchedule.detailSave")}
+            </AButton>
+          </div>
+        }
+        onCancel={closeDrilldownRowModal}
+      >
+        <AForm
+          form={drilldownRowForm}
+          layout="vertical"
+        >
+          {(drilldown?.columns || []).map(column => (
+            <AForm.Item
+              key={column.key}
+              label={column.title}
+              name={column.key}
+              rules={[
+                {
+                  required: true,
+                  message: t("page.dataSchedule.detailDrilldownFieldRequired", { fieldName: column.title })
+                }
+              ]}
+            >
+              <AInput.TextArea autoSize={{ maxRows: 6, minRows: 2 }} />
+            </AForm.Item>
+          ))}
+        </AForm>
       </AModal>
     </div>
   );

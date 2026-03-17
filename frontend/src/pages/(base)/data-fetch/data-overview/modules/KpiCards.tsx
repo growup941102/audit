@@ -1,3 +1,5 @@
+import { useProjectStatusSummary } from '@/service/hooks';
+
 interface KpiItemProps {
   color: string;
   key: string;
@@ -8,45 +10,51 @@ interface KpiItemProps {
   value: number;
 }
 
-function useGetKpiData(): KpiItemProps[] {
+function useGetKpiData(summary?: Api.DataOverview.ProjectStatusSummary): KpiItemProps[] {
   const { t } = useTranslation();
+  const totalProjects = summary?.totalProjects || 0;
+
+  function calcPercent(value: number) {
+    if (!totalProjects) return 0;
+    return Math.round((value / totalProjects) * 100);
+  }
 
   const kpiList: KpiItemProps[] = [
     {
       color: '#52c41a',
       key: 'completed',
-      percent: 72,
+      percent: calcPercent(summary?.successProjects || 0),
       percentLabel: t('page.dataOverview.completionRate'),
       title: t('page.dataOverview.completedTasks'),
-      total: 1280,
-      value: 922
+      total: totalProjects,
+      value: summary?.successProjects || 0
     },
     {
       color: '#faad14',
       key: 'running',
-      percent: 0,
+      percent: calcPercent(summary?.runningProjects || 0),
       percentLabel: t('page.dataOverview.runningRate'),
       title: t('page.dataOverview.runningTasks'),
-      total: 0,
-      value: 0
+      total: totalProjects,
+      value: summary?.runningProjects || 0
     },
     {
       color: '#4375e6',
       key: 'remaining',
-      percent: 8,
+      percent: calcPercent(summary?.pendingProjects || 0),
       percentLabel: t('page.dataOverview.remainingRate'),
       title: t('page.dataOverview.remainingTasks'),
-      total: 1280,
-      value: 102
+      total: totalProjects,
+      value: summary?.pendingProjects || 0
     },
     {
       color: '#f5222d',
       key: 'abnormal',
-      percent: 5,
+      percent: calcPercent(summary?.failedProjects || 0),
       percentLabel: t('page.dataOverview.abnormalRate'),
       title: t('page.dataOverview.abnormalTasks'),
-      total: 1280,
-      value: 64
+      total: totalProjects,
+      value: summary?.failedProjects || 0
     }
   ];
 
@@ -96,7 +104,8 @@ const KpiCardItem = (item: KpiItemProps) => {
 };
 
 const KpiCards = () => {
-  const kpiList = useGetKpiData();
+  const summaryQuery = useProjectStatusSummary();
+  const kpiList = useGetKpiData(summaryQuery.data);
 
   return (
     <ARow gutter={[16, 16]}>

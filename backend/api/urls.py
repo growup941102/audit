@@ -6,6 +6,21 @@ urlpatterns = [
     path('captcha/', views.get_captcha, name='get_captcha'),
     path('health/', views.health_check, name='health_check'),
     path(
+        'admin/projects/status/summary/',
+        views.get_project_status_summary,
+        name='get_project_status_summary'
+    ),
+    path(
+        'admin/projects/<str:project_id>/status/',
+        views.get_project_status_detail,
+        name='get_project_status_detail'
+    ),
+    path(
+        'admin/projects/status/ranking/',
+        views.get_project_status_ranking,
+        name='get_project_status_ranking'
+    ),
+    path(
         'data-schedule/tasks/<str:task_id>/extract-result/summary/',
         views.get_data_schedule_extract_summary,
         name='get_data_schedule_extract_summary'
@@ -16,9 +31,29 @@ urlpatterns = [
         name='get_data_schedule_extract_fields'
     ),
     path(
+        'data-schedule/tasks/<str:task_id>/extract-result/fields/<str:field_key>/',
+        views.update_data_schedule_extract_field,
+        name='update_data_schedule_extract_field'
+    ),
+    path(
         'data-schedule/tasks/<str:task_id>/extract-result/drilldown/',
         views.get_data_schedule_extract_drilldown,
         name='get_data_schedule_extract_drilldown'
+    ),
+    path(
+        'data-schedule/tasks/<str:task_id>/extract-result/drilldown/rows/',
+        views.create_data_schedule_extract_drilldown_row,
+        name='create_data_schedule_extract_drilldown_row'
+    ),
+    path(
+        'data-schedule/tasks/<str:task_id>/extract-result/drilldown/rows/<int:row_id>/',
+        views.update_data_schedule_extract_drilldown_row,
+        name='update_data_schedule_extract_drilldown_row'
+    ),
+    path(
+        'data-schedule/tasks/<str:task_id>/extract-result/drilldown/rows/<int:row_id>/delete/',
+        views.delete_data_schedule_extract_drilldown_row,
+        name='delete_data_schedule_extract_drilldown_row'
     ),
     path(
         'data-schedule/tasks/<str:task_id>/extract-result/export/',
@@ -39,6 +74,11 @@ urlpatterns = [
         'data-schedule/tasks/<str:task_id>/logs/export/',
         views.export_data_schedule_logs,
         name='export_data_schedule_logs'
+    ),
+    path(
+        'data-schedule/export-debug-logs/',
+        views.get_data_schedule_export_debug_logs,
+        name='get_data_schedule_export_debug_logs'
     ),
     path('system-manage/website-settings/upload/', views.upload_website_image, name='upload_website_image'),
     path('system-manage/website-settings/', views.get_website_settings, name='get_website_settings'),

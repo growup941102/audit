@@ -85,6 +85,16 @@ export function fetchDataScheduleExtractFields(params: Api.DataSchedule.FieldLis
   });
 }
 
+/** update extract result field value */
+export function updateDataScheduleExtractField(params: Api.DataSchedule.FieldUpdateParams) {
+  const { fieldKey, fieldValue, taskId } = params;
+  return request<Api.DataSchedule.FieldRecord>({
+    data: { fieldValue },
+    method: 'patch',
+    url: DATA_SCHEDULE_URLS.UPDATE_EXTRACT_FIELD(taskId, fieldKey)
+  });
+}
+
 /** get field drilldown detail */
 export function fetchDataScheduleExtractDrilldown(params: Api.DataSchedule.DrilldownParams) {
   const { taskId, ...query } = params;
@@ -93,6 +103,36 @@ export function fetchDataScheduleExtractDrilldown(params: Api.DataSchedule.Drill
     method: 'get',
     params: query,
     url: DATA_SCHEDULE_URLS.GET_EXTRACT_DRILLDOWN(taskId)
+  });
+}
+
+/** create drilldown row */
+export function createDataScheduleDrilldownRow(params: Api.DataSchedule.CreateDrilldownRowParams) {
+  const { taskId, ...payload } = params;
+  return request<{ fieldKey: string; record: Api.DataSchedule.DrilldownRecord }>({
+    data: payload,
+    method: 'post',
+    url: DATA_SCHEDULE_URLS.CREATE_EXTRACT_DRILLDOWN_ROW(taskId)
+  });
+}
+
+/** update drilldown row */
+export function updateDataScheduleDrilldownRow(params: Api.DataSchedule.UpdateDrilldownRowParams) {
+  const { rowId, taskId, ...payload } = params;
+  return request<{ fieldKey: string; record: Api.DataSchedule.DrilldownRecord }>({
+    data: payload,
+    method: 'patch',
+    url: DATA_SCHEDULE_URLS.UPDATE_EXTRACT_DRILLDOWN_ROW(taskId, rowId)
+  });
+}
+
+/** delete drilldown row */
+export function deleteDataScheduleDrilldownRow(params: Api.DataSchedule.DeleteDrilldownRowParams) {
+  const { fieldKey, rowId, taskId } = params;
+  return request<{ fieldKey: string; rowId: number }>({
+    method: 'delete',
+    params: { fieldKey },
+    url: DATA_SCHEDULE_URLS.DELETE_EXTRACT_DRILLDOWN_ROW(taskId, rowId)
   });
 }
 

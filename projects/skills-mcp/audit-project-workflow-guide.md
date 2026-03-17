@@ -35,6 +35,10 @@
 - 需要沉淀项目级 skill 或 MCP 规范
 - 需要判断该用哪个 MCP
 
+### 配套技能（数据库安全）
+- 当需求涉及补接口连库、修数、DDL 或高风险联调时，建议配套使用：
+  - `projects/skills-mcp/safe-sql-api-workflow/SKILL.md`
+
 ## 5. 说明
 - 该 skill 主要提供流程规则，不代替具体业务知识。
 - 具体后端结构、接口契约和模板内容，仍以 `projects/` 目录下文档为准。

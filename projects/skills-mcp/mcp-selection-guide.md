@@ -156,10 +156,22 @@
 
 如果能先用本地代码阅读、日志、文档、测试解决，就优先不用 MCP。
 
+## 4.1 SQL 安全配套 Skill（推荐）
+
+当需求涉及“补接口 + 连 SQL + 可能写库”时，建议同时使用：
+- `projects/skills-mcp/safe-sql-api-workflow/SKILL.md`
+
+该 skill 强制执行：
+- 默认只读
+- 写操作二次确认
+- 先测试库再生产
+- 事务与回滚预案
+- `SELECT` 命中范围预检
+- 联调前后审计记录
+
 ## 5. 参考来源
 - [Playwright MCP 官方 GitHub](https://github.com/microsoft/playwright-mcp)
 - [Chrome DevTools MCP GitHub Registry 页面](https://github.com/mcp/chromedevtools/chrome-devtools-mcp)
 - [Context7 官方 GitHub](https://github.com/upstash/context7)
 - [SSH MCP Server - LobeHub](https://lobehub.com/zh/mcp/zibdie-ssh-mcp-server)
 - [MySQL 数据库 MCP 服务 - LobeHub](https://lobehub.com/zh/mcp/gcluowenqiang-mysql-mcp)
-

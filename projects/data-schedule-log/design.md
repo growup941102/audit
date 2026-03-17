@@ -99,6 +99,19 @@
 - 响应结构：`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
 - 异常处理：导出失败返回统一错误响应。
 
+### 5.4 导出调试日志（新增）
+- 接口地址：`GET /api/data-schedule/export-debug-logs/`
+- 请求方法：GET
+- 请求参数：
+  - `lines`: 返回日志行数（默认 `200`，最大 `2000`）
+  - `keyword`: 关键字过滤（可选）
+- 响应结构：
+  - `file`: 日志文件绝对路径
+  - `total`: 返回记录条数
+  - `records[]`: 每行 JSON 日志记录（含 `event/level/taskId/scope/time/requestParams/error/traceback`）
+- 日志文件位置：
+  - `backend/logs/data_schedule_export.log`
+
 ## 6. 数据模型设计
 - 本期不新增数据库表，先使用可替换日志数据源结构：
   - `task_meta`: 任务日志头部信息

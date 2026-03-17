@@ -10,6 +10,7 @@ from pathlib import Path
 import secrets
 import string
 import time
+import traceback
 import uuid
 from urllib.parse import quote, urlparse
 
@@ -161,6 +162,26 @@ DATA_SCHEDULE_LOG_ORDER_DIRECTION_SET = {
 DATA_SCHEDULE_LOG_DEFAULT_COUNT = 100
 DATA_SCHEDULE_LOG_MAX_COUNT = 1000
 DATA_SCHEDULE_LOG_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
+DATA_SCHEDULE_FIELD_VALUE_MAX_LENGTH = 5000
+DATA_SCHEDULE_DRILLDOWN_ROW_VALUE_MAX_LENGTH = 2000
+DATA_SCHEDULE_EXPORT_LOG_DIR = Path(__file__).resolve().parents[1] / 'logs'
+DATA_SCHEDULE_EXPORT_LOG_FILE = DATA_SCHEDULE_EXPORT_LOG_DIR / 'data_schedule_export.log'
+DATA_SCHEDULE_FIELD_OVERRIDE_STORE = {}
+
+PROJECT_STATUS_RUNNING_TASK_SET = {'RUNNING', 'CLAIMED', 'LOCKED'}
+PROJECT_STATUS_FAILED_TASK_SET = {'FAILED', 'CANCELLED'}
+PROJECT_STATUS_CATEGORY_COMPLETED = 'completed'
+PROJECT_STATUS_CATEGORY_RUNNING = 'running'
+PROJECT_STATUS_CATEGORY_REMAINING = 'remaining'
+PROJECT_STATUS_CATEGORY_ABNORMAL = 'abnormal'
+PROJECT_STATUS_CATEGORY_SET = {
+    PROJECT_STATUS_CATEGORY_COMPLETED,
+    PROJECT_STATUS_CATEGORY_RUNNING,
+    PROJECT_STATUS_CATEGORY_REMAINING,
+    PROJECT_STATUS_CATEGORY_ABNORMAL,
+}
+PROJECT_STATUS_RANKING_DEFAULT_LIMIT = 20
+PROJECT_STATUS_RANKING_MAX_LIMIT = 100
 
 
 def _parse_positive_int(value, default=1, max_value=200):
@@ -175,6 +196,456 @@ def _parse_positive_int(value, default=1, max_value=200):
         return max_value
 
     return parsed
+
+
+def _dictfetchall(cursor):
+    columns = [col[0] for col in cursor.description or []]
+    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+def _to_int(value, default=0):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_str(value, default=''):
+    if value is None:
+        return default
+    text = str(value).strip()
+    return text if text else default
+
+
+def _format_datetime_text(value):
+    if value is None or value == '':
+        return None
+    if isinstance(value, datetime):
+        return value.strftime(DATA_SCHEDULE_LOG_TIME_FORMAT)
+    return str(value)
+
+
+def _parse_datetime_value(value):
+    if value is None or value == '':
+        return None
+    if isinstance(value, datetime):
+        return value
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    for fmt in (DATA_SCHEDULE_LOG_TIME_FORMAT, '%Y-%m-%d'):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            pass
+
+    try:
+        parsed = datetime.fromisoformat(text.replace('Z', '+00:00'))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone().replace(tzinfo=None)
+        return parsed
+    except ValueError:
+        return None
+
+
+def _fetch_project_name_rows():
+    sql = (
+        "SELECT project_id AS projectId, project_name AS projectName "
+        "FROM c_r_cm_project "
+        "WHERE project_id IS NOT NULL AND project_id != ''"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
+        return _dictfetchall(cursor)
+
+
+def _fetch_project_file_snapshot_rows():
+    sql = (
+        "SELECT project_id AS projectId, "
+        "COUNT(*) AS totalFiles, "
+        "SUM(CASE WHEN status <> 'DRAFT' THEN 1 ELSE 0 END) AS nonDraftFiles, "
+        "SUM(CASE WHEN status = 'DRAFT' THEN 1 ELSE 0 END) AS draftFiles, "
+        "SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) AS pendingFiles, "
+        "SUM(CASE WHEN status = 'RUNNING' THEN 1 ELSE 0 END) AS runningFiles, "
+        "SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) AS successFiles, "
+        "SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failedFiles, "
+        "SUM(CASE WHEN status = 'PARTIAL_FAILED' THEN 1 ELSE 0 END) AS partialFailedFiles, "
+        "SUM(CASE WHEN status = 'SUCCESS' AND current_step = 3 THEN 1 ELSE 0 END) AS step3SuccessFiles, "
+        "MAX(COALESCE(current_step, 0)) AS maxCurrentStep, "
+        "MAX(CASE WHEN status = 'RUNNING' THEN COALESCE(current_step, 0) ELSE 0 END) AS runningStepNo, "
+        "SUBSTRING_INDEX( "
+        "  GROUP_CONCAT( "
+        "    CASE WHEN last_error IS NOT NULL AND last_error != '' THEN last_error ELSE NULL END "
+        "    ORDER BY updated_at DESC SEPARATOR '\n' "
+        "  ), "
+        "  '\n', "
+        "  1 "
+        ") AS latestFileError "
+        "FROM c_r_cm_file_prepare "
+        "WHERE project_id IS NOT NULL AND project_id != '' "
+        "GROUP BY project_id"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
+        return _dictfetchall(cursor)
+
+
+def _fetch_latest_project_task_rows():
+    sql = (
+        "SELECT t.project_id AS projectId, "
+        "t.step_no AS stepNo, "
+        "t.status AS status, "
+        "t.last_error AS lastError, "
+        "t.updated_at AS updatedAt "
+        "FROM c_r_cm_task_item_queue t "
+        "JOIN ( "
+        "    SELECT project_id, "
+        "           SUBSTRING_INDEX( "
+        "               GROUP_CONCAT( "
+        "                   resource_id "
+        "                   ORDER BY COALESCE(locked_at, updated_at) DESC, updated_at DESC, resource_id DESC "
+        "                   SEPARATOR ',' "
+        "               ), "
+        "               ',', "
+        "               1 "
+        "           ) AS latest_resource_id "
+        "    FROM c_r_cm_task_item_queue "
+        "    WHERE file_id LIKE 'PROJECT:%' "
+        "    GROUP BY project_id "
+        ") latest ON latest.latest_resource_id = t.resource_id "
+        "WHERE t.file_id LIKE 'PROJECT:%'"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
+        return _dictfetchall(cursor)
+
+
+def _empty_file_snapshot(project_id):
+    return {
+        'projectId': project_id,
+        'totalFiles': 0,
+        'nonDraftFiles': 0,
+        'draftFiles': 0,
+        'pendingFiles': 0,
+        'runningFiles': 0,
+        'successFiles': 0,
+        'failedFiles': 0,
+        'partialFailedFiles': 0,
+        'step3SuccessFiles': 0,
+        'maxCurrentStep': 0,
+        'runningStepNo': 0,
+        'latestFileError': '',
+    }
+
+
+def _normalize_file_snapshot(row):
+    project_id = _to_str(row.get('projectId'))
+    return {
+        'projectId': project_id,
+        'totalFiles': _to_int(row.get('totalFiles')),
+        'nonDraftFiles': _to_int(row.get('nonDraftFiles')),
+        'draftFiles': _to_int(row.get('draftFiles')),
+        'pendingFiles': _to_int(row.get('pendingFiles')),
+        'runningFiles': _to_int(row.get('runningFiles')),
+        'successFiles': _to_int(row.get('successFiles')),
+        'failedFiles': _to_int(row.get('failedFiles')),
+        'partialFailedFiles': _to_int(row.get('partialFailedFiles')),
+        'step3SuccessFiles': _to_int(row.get('step3SuccessFiles')),
+        'maxCurrentStep': _to_int(row.get('maxCurrentStep')),
+        'runningStepNo': _to_int(row.get('runningStepNo')),
+        'latestFileError': _to_str(row.get('latestFileError')),
+    }
+
+
+def _normalize_task_snapshot(row):
+    return {
+        'projectId': _to_str(row.get('projectId')),
+        'stepNo': _to_int(row.get('stepNo')),
+        'status': _to_str(row.get('status')).upper(),
+        'lastError': _to_str(row.get('lastError')),
+        'updatedAt': _format_datetime_text(row.get('updatedAt')),
+    }
+
+
+def _resolve_project_current_step(file_snapshot, task_snapshot):
+    running_step_no = _to_int(file_snapshot.get('runningStepNo'))
+    if running_step_no > 0:
+        return running_step_no
+
+    if task_snapshot:
+        task_step_no = _to_int(task_snapshot.get('stepNo'))
+        if task_step_no > 0:
+            return task_step_no
+
+    max_current_step = _to_int(file_snapshot.get('maxCurrentStep'))
+    if max_current_step > 0:
+        return max_current_step
+
+    return 0
+
+
+def _resolve_project_status(file_snapshot, task_snapshot):
+    running_files = _to_int(file_snapshot.get('runningFiles'))
+    non_draft_files = _to_int(file_snapshot.get('nonDraftFiles'))
+    step3_success_files = _to_int(file_snapshot.get('step3SuccessFiles'))
+    failed_files = _to_int(file_snapshot.get('failedFiles'))
+    partial_failed_files = _to_int(file_snapshot.get('partialFailedFiles'))
+    failed_like_files = failed_files + partial_failed_files
+
+    task_status = ''
+    if task_snapshot:
+        task_status = _to_str(task_snapshot.get('status')).upper()
+
+    if running_files > 0 or task_status in PROJECT_STATUS_RUNNING_TASK_SET:
+        return 'RUNNING'
+
+    if non_draft_files > 0 and step3_success_files >= non_draft_files:
+        return 'SUCCESS'
+
+    if task_status == 'PARTIAL_FAILED' or (failed_like_files > 0 and failed_like_files < non_draft_files):
+        return 'PARTIAL_FAILED'
+
+    if task_status in PROJECT_STATUS_FAILED_TASK_SET or failed_like_files > 0:
+        return 'FAILED'
+
+    return 'PENDING'
+
+
+def _resolve_project_last_error(file_snapshot, task_snapshot):
+    if task_snapshot:
+        task_error = _to_str(task_snapshot.get('lastError'))
+        if task_error:
+            return task_error
+
+    file_error = _to_str(file_snapshot.get('latestFileError'))
+    return file_error or None
+
+
+def _project_status_label(status_value):
+    if status_value == 'RUNNING':
+        return '运行中'
+    if status_value == 'SUCCESS':
+        return '解析成功'
+    if status_value == 'FAILED':
+        return '解析失败'
+    if status_value == 'PARTIAL_FAILED':
+        return '部分失败'
+    return '待处理'
+
+
+def _project_step_label(step_no):
+    if step_no == 1:
+        return '步骤1'
+    if step_no == 2:
+        return '步骤2'
+    if step_no == 3:
+        return '步骤3'
+    return '待处理'
+
+
+def _build_project_status_rows():
+    project_rows = _fetch_project_name_rows()
+    file_rows = _fetch_project_file_snapshot_rows()
+    task_rows = _fetch_latest_project_task_rows()
+
+    project_name_map = {}
+    for row in project_rows:
+        project_id = _to_str(row.get('projectId'))
+        if not project_id:
+            continue
+        project_name_map[project_id] = _to_str(row.get('projectName'))
+
+    file_snapshot_map = {}
+    for row in file_rows:
+        normalized = _normalize_file_snapshot(row)
+        project_id = normalized.get('projectId')
+        if not project_id:
+            continue
+        file_snapshot_map[project_id] = normalized
+
+    task_snapshot_map = {}
+    for row in task_rows:
+        normalized = _normalize_task_snapshot(row)
+        project_id = normalized.get('projectId')
+        if not project_id:
+            continue
+        task_snapshot_map[project_id] = normalized
+
+    project_ids = set(project_name_map.keys()) | set(file_snapshot_map.keys()) | set(task_snapshot_map.keys())
+    rows = []
+    for project_id in sorted(project_ids):
+        file_snapshot = file_snapshot_map.get(project_id, _empty_file_snapshot(project_id))
+        task_snapshot = task_snapshot_map.get(project_id)
+        status_value = _resolve_project_status(file_snapshot, task_snapshot)
+        current_step_no = _resolve_project_current_step(file_snapshot, task_snapshot)
+        latest_task_status = _to_str(task_snapshot.get('status')) if task_snapshot else None
+        latest_task_step_no = _to_int(task_snapshot.get('stepNo')) if task_snapshot else None
+        latest_task_updated_at = task_snapshot.get('updatedAt') if task_snapshot else None
+
+        rows.append({
+            'projectId': project_id,
+            'projectName': project_name_map.get(project_id, ''),
+            'status': status_value,
+            'statusLabel': _project_status_label(status_value),
+            'currentStepNo': current_step_no,
+            'currentStepName': _project_step_label(current_step_no),
+            'latestTaskStatus': latest_task_status,
+            'latestTaskStepNo': latest_task_step_no,
+            'latestTaskUpdatedAt': latest_task_updated_at,
+            'lastError': _resolve_project_last_error(file_snapshot, task_snapshot),
+            'fileStats': {
+                'totalFiles': _to_int(file_snapshot.get('totalFiles')),
+                'nonDraftFiles': _to_int(file_snapshot.get('nonDraftFiles')),
+                'draftFiles': _to_int(file_snapshot.get('draftFiles')),
+                'pendingFiles': _to_int(file_snapshot.get('pendingFiles')),
+                'runningFiles': _to_int(file_snapshot.get('runningFiles')),
+                'successFiles': _to_int(file_snapshot.get('successFiles')),
+                'failedFiles': _to_int(file_snapshot.get('failedFiles')),
+                'partialFailedFiles': _to_int(file_snapshot.get('partialFailedFiles')),
+                'step3SuccessFiles': _to_int(file_snapshot.get('step3SuccessFiles')),
+            }
+        })
+
+    return rows
+
+
+def _build_project_summary_payload(project_status_rows):
+    payload = {
+        'totalProjects': len(project_status_rows),
+        'runningProjects': 0,
+        'successProjects': 0,
+        'failedProjects': 0,
+        'pendingProjects': 0,
+    }
+
+    for row in project_status_rows:
+        status_value = row.get('status')
+        if status_value == 'RUNNING':
+            payload['runningProjects'] += 1
+        elif status_value == 'SUCCESS':
+            payload['successProjects'] += 1
+        elif status_value in {'FAILED', 'PARTIAL_FAILED'}:
+            payload['failedProjects'] += 1
+        else:
+            payload['pendingProjects'] += 1
+
+    return payload
+
+
+def _normalize_ranking_category(raw_value):
+    normalized = _to_str(raw_value).lower()
+    if not normalized:
+        return PROJECT_STATUS_CATEGORY_COMPLETED
+    if normalized in {'success', PROJECT_STATUS_CATEGORY_COMPLETED}:
+        return PROJECT_STATUS_CATEGORY_COMPLETED
+    if normalized in {'pending', PROJECT_STATUS_CATEGORY_REMAINING}:
+        return PROJECT_STATUS_CATEGORY_REMAINING
+    if normalized in {'failed', 'partial_failed', PROJECT_STATUS_CATEGORY_ABNORMAL}:
+        return PROJECT_STATUS_CATEGORY_ABNORMAL
+    if normalized in PROJECT_STATUS_CATEGORY_SET:
+        return normalized
+    return None
+
+
+def _status_match_ranking_category(category, status_value):
+    if category == PROJECT_STATUS_CATEGORY_COMPLETED:
+        return status_value == 'SUCCESS'
+    if category == PROJECT_STATUS_CATEGORY_RUNNING:
+        return status_value == 'RUNNING'
+    if category == PROJECT_STATUS_CATEGORY_REMAINING:
+        return status_value == 'PENDING'
+    if category == PROJECT_STATUS_CATEGORY_ABNORMAL:
+        return status_value in {'FAILED', 'PARTIAL_FAILED'}
+    return False
+
+
+def _filter_project_status_rows_by_time(rows, start_time, end_time):
+    if start_time is None and end_time is None:
+        return rows
+
+    out = []
+    for row in rows:
+        updated_at = _parse_datetime_value(row.get('latestTaskUpdatedAt'))
+        if updated_at is None:
+            continue
+        if start_time and updated_at < start_time:
+            continue
+        if end_time and updated_at > end_time:
+            continue
+        out.append(row)
+    return out
+
+
+def _to_excel_cell_value(value):
+    if value is None:
+        return ''
+    if isinstance(value, (str, int, float, bool, datetime)):
+        return value
+    if isinstance(value, (list, tuple, set, dict)):
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def _get_request_query_snapshot(request):
+    return {key: request.query_params.get(key) for key in request.query_params.keys()}
+
+
+def _append_data_schedule_export_log(level, event, *, task_id='', scope='', request_params=None, extra=None, error=None):
+    record = {
+        'event': event,
+        'level': level,
+        'scope': scope,
+        'taskId': task_id,
+        'time': datetime.now().strftime(DATA_SCHEDULE_LOG_TIME_FORMAT)
+    }
+    if request_params:
+        record['requestParams'] = request_params
+    if extra is not None:
+        record['extra'] = extra
+    if error is not None:
+        record['error'] = f'{type(error).__name__}: {error}'
+        record['traceback'] = traceback.format_exc()
+
+    try:
+        DATA_SCHEDULE_EXPORT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with DATA_SCHEDULE_EXPORT_LOG_FILE.open('a', encoding='utf-8') as log_file:
+            log_file.write(f'{json.dumps(record, ensure_ascii=False)}\n')
+    except Exception:
+        logger.exception('append data schedule export log failed')
+
+
+def _read_data_schedule_export_log_records(limit, keyword=''):
+    if not DATA_SCHEDULE_EXPORT_LOG_FILE.exists():
+        return []
+
+    normalized_keyword = str(keyword or '').strip().lower()
+    records = []
+    with DATA_SCHEDULE_EXPORT_LOG_FILE.open('r', encoding='utf-8') as log_file:
+        for line in log_file:
+            raw_line = line.strip()
+            if not raw_line:
+                continue
+            if normalized_keyword and normalized_keyword not in raw_line.lower():
+                continue
+            try:
+                records.append(json.loads(raw_line))
+            except json.JSONDecodeError:
+                records.append({'raw': raw_line})
+
+    if limit <= 0:
+        return records
+    return records[-limit:]
 
 
 def _build_data_schedule_mock_fields():
@@ -502,9 +973,89 @@ def _get_data_schedule_summary(task_id):
 
 
 def _get_data_schedule_fields(task_id):
-    # task_id is kept for future real data-source replacement.
-    _ = task_id
-    return _build_data_schedule_mock_fields()
+    fields = _build_data_schedule_mock_fields()
+    task_overrides = DATA_SCHEDULE_FIELD_OVERRIDE_STORE.get(task_id) or {}
+    if not task_overrides:
+        return fields
+
+    for field in fields:
+        field_key = field.get('fieldKey') or ''
+        if field_key and field_key in task_overrides:
+            field['fieldValueDisplay'] = task_overrides[field_key]
+    return fields
+
+
+def _update_data_schedule_field_value(task_id, field_key, field_value):
+    task_overrides = DATA_SCHEDULE_FIELD_OVERRIDE_STORE.setdefault(task_id, {})
+    task_overrides[field_key] = field_value
+
+
+def _get_data_schedule_field_item(task_id, field_key):
+    normalized_field_key = str(field_key or '').strip()
+    if not normalized_field_key:
+        return None
+
+    all_fields = _get_data_schedule_fields(task_id)
+    field_map = {item.get('fieldKey'): item for item in all_fields}
+    return field_map.get(normalized_field_key)
+
+
+def _get_data_schedule_drilldown_payload(task_id, field_key):
+    field_item = _get_data_schedule_field_item(task_id, field_key)
+    if not field_item:
+        return None, None, '字段不存在', status.HTTP_404_NOT_FOUND, ERROR_CODE_NOT_FOUND
+    if not field_item.get('canDrilldown'):
+        return None, None, '当前字段不支持下钻', status.HTTP_400_BAD_REQUEST, ERROR_CODE_INVALID_PARAMS
+
+    payload = DATA_SCHEDULE_DRILLDOWN_MOCK.get(field_item.get('fieldKey'))
+    if not payload:
+        return None, None, '下钻数据不存在', status.HTTP_404_NOT_FOUND, ERROR_CODE_NOT_FOUND
+    return field_item, payload, '', status.HTTP_200_OK, SUCCESS_CODE
+
+
+def _normalize_drilldown_row_data(row_data, columns):
+    if row_data is None:
+        row_data = {}
+    if not isinstance(row_data, dict):
+        return None, 'rowData 格式错误'
+
+    normalized = {}
+    for column in columns:
+        column_key = str(column.get('key') or '').strip()
+        if not column_key:
+            continue
+
+        raw_value = row_data.get(column_key, '--')
+        if raw_value is None:
+            value = '--'
+        else:
+            value = str(raw_value)
+
+        if len(value) > DATA_SCHEDULE_DRILLDOWN_ROW_VALUE_MAX_LENGTH:
+            return None, f'{column_key} 长度不能超过{DATA_SCHEDULE_DRILLDOWN_ROW_VALUE_MAX_LENGTH}个字符'
+
+        normalized[column_key] = value
+    return normalized, ''
+
+
+def _get_next_drilldown_row_id(records):
+    max_id = 0
+    for item in records:
+        try:
+            max_id = max(max_id, int(item.get('id')))
+        except (TypeError, ValueError):
+            continue
+    return max_id + 1
+
+
+def _find_drilldown_row(records, row_id):
+    for item in records:
+        try:
+            if int(item.get('id')) == int(row_id):
+                return item
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 def _filter_data_schedule_fields_by_scope(fields, scope):
@@ -722,13 +1273,13 @@ def _build_data_schedule_log_export_binary(task_meta, filters, records):
 
     for record in records:
         worksheet.append([
-            record.get('time') or '',
-            record.get('component') or '',
-            record.get('level') or DATA_SCHEDULE_LOG_LEVEL_INFO,
-            record.get('message') or '',
+            _to_excel_cell_value(record.get('time') or ''),
+            _to_excel_cell_value(record.get('component') or ''),
+            _to_excel_cell_value(record.get('level') or DATA_SCHEDULE_LOG_LEVEL_INFO),
+            _to_excel_cell_value(record.get('message') or ''),
         ])
 
-    worksheet.freeze_panes = 'A13'
+    _style_data_schedule_log_sheet(worksheet, data_start_row=13)
 
     output = io.BytesIO()
     workbook.save(output)
@@ -756,6 +1307,224 @@ def _safe_excel_sheet_name(raw_name, used_names):
 
     used_names.add(candidate)
     return candidate
+
+
+def _build_excel_internal_link(sheet_name, target_cell='A1'):
+    normalized_sheet_name = str(sheet_name or '').replace("'", "''")
+    normalized_cell = str(target_cell or 'A1').strip() or 'A1'
+    return f"#'{normalized_sheet_name}'!{normalized_cell}"
+
+
+def _style_data_schedule_summary_sheet(sheet):
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    sheet.column_dimensions['A'].width = 18
+    sheet.column_dimensions['B'].width = 56
+
+    thin_border = Border(
+        left=Side(style='thin', color='D9D9D9'),
+        right=Side(style='thin', color='D9D9D9'),
+        top=Side(style='thin', color='D9D9D9'),
+        bottom=Side(style='thin', color='D9D9D9')
+    )
+    header_fill = PatternFill(fill_type='solid', fgColor='1F4E78')
+    label_fill = PatternFill(fill_type='solid', fgColor='EEF3FA')
+    header_font = Font(name='Microsoft YaHei', bold=True, color='FFFFFF')
+    body_font = Font(name='Microsoft YaHei', color='1F2937')
+    label_font = Font(name='Microsoft YaHei', bold=True, color='1F4E78')
+    align = Alignment(horizontal='left', vertical='center', wrap_text=True)
+
+    for column in range(1, 3):
+        cell = sheet.cell(row=1, column=column)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = align
+        cell.border = thin_border
+
+    for row in range(2, sheet.max_row + 1):
+        for column in range(1, 3):
+            cell = sheet.cell(row=row, column=column)
+            cell.font = body_font
+            cell.alignment = align
+            cell.border = thin_border
+            if column == 1:
+                cell.fill = label_fill
+                cell.font = label_font
+
+    sheet.sheet_view.showGridLines = False
+
+
+def _style_data_schedule_field_sheet(sheet):
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    sheet.column_dimensions['A'].width = 26
+    sheet.column_dimensions['B'].width = 56
+    sheet.column_dimensions['C'].width = 14
+    sheet.column_dimensions['D'].width = 12
+
+    thin_border = Border(
+        left=Side(style='thin', color='E5E7EB'),
+        right=Side(style='thin', color='E5E7EB'),
+        top=Side(style='thin', color='E5E7EB'),
+        bottom=Side(style='thin', color='E5E7EB')
+    )
+    header_fill = PatternFill(fill_type='solid', fgColor='1F4E78')
+    header_font = Font(name='Microsoft YaHei', bold=True, color='FFFFFF')
+    body_font = Font(name='Microsoft YaHei', color='111827')
+    center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    left_align = Alignment(horizontal='left', vertical='center', wrap_text=True)
+
+    for column in range(1, 5):
+        cell = sheet.cell(row=1, column=column)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center_align
+        cell.border = thin_border
+
+    for row in range(2, sheet.max_row + 1):
+        for column in range(1, 5):
+            cell = sheet.cell(row=row, column=column)
+            cell.font = body_font
+            cell.border = thin_border
+            cell.alignment = left_align if column in {1, 2} else center_align
+
+        status_cell = sheet.cell(row=row, column=3)
+        status_value = str(status_cell.value or '')
+        if status_value == '提取完整':
+            status_cell.fill = PatternFill(fill_type='solid', fgColor='E8F5E9')
+            status_cell.font = Font(name='Microsoft YaHei', bold=True, color='1B5E20')
+        elif status_value == '提取缺失':
+            status_cell.fill = PatternFill(fill_type='solid', fgColor='FDECEA')
+            status_cell.font = Font(name='Microsoft YaHei', bold=True, color='B42318')
+
+        action_cell = sheet.cell(row=row, column=4)
+        action_cell.fill = PatternFill(fill_type='solid', fgColor='F8FAFC')
+
+        value_cell = sheet.cell(row=row, column=2)
+        if str(value_cell.value or '') == '查看':
+            value_cell.font = Font(name='Microsoft YaHei', color='0563C1', underline='single')
+            value_cell.fill = PatternFill(fill_type='solid', fgColor='EEF6FF')
+
+    sheet.auto_filter.ref = f'A1:D{max(1, sheet.max_row)}'
+    sheet.sheet_view.showGridLines = False
+
+
+def _style_data_schedule_drilldown_sheet(sheet):
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    thin_border = Border(
+        left=Side(style='thin', color='E5E7EB'),
+        right=Side(style='thin', color='E5E7EB'),
+        top=Side(style='thin', color='E5E7EB'),
+        bottom=Side(style='thin', color='E5E7EB')
+    )
+    header_fill = PatternFill(fill_type='solid', fgColor='2F5597')
+    header_font = Font(name='Microsoft YaHei', bold=True, color='FFFFFF')
+    body_font = Font(name='Microsoft YaHei', color='111827')
+    center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    left_align = Alignment(horizontal='left', vertical='center', wrap_text=True)
+
+    for column in range(1, sheet.max_column + 1):
+        cell = sheet.cell(row=1, column=column)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center_align
+        cell.border = thin_border
+
+    for row in range(2, sheet.max_row + 1):
+        for column in range(1, sheet.max_column + 1):
+            cell = sheet.cell(row=row, column=column)
+            cell.font = body_font
+            cell.border = thin_border
+            cell.alignment = left_align if column < sheet.max_column else center_align
+
+    for column in range(1, sheet.max_column + 1):
+        max_length = 0
+        for row in range(1, min(sheet.max_row, 200) + 1):
+            value = sheet.cell(row=row, column=column).value
+            if value is None:
+                continue
+            max_length = max(max_length, len(str(value)))
+        sheet.column_dimensions[get_column_letter(column)].width = min(max(max_length + 4, 12), 48)
+
+    sheet.auto_filter.ref = f'A1:{get_column_letter(sheet.max_column)}{max(1, sheet.max_row)}'
+    sheet.sheet_view.showGridLines = False
+
+
+def _style_data_schedule_log_sheet(sheet, data_start_row=13):
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    sheet.column_dimensions['A'].width = 22
+    sheet.column_dimensions['B'].width = 18
+    sheet.column_dimensions['C'].width = 12
+    sheet.column_dimensions['D'].width = 82
+
+    thin_border = Border(
+        left=Side(style='thin', color='E5E7EB'),
+        right=Side(style='thin', color='E5E7EB'),
+        top=Side(style='thin', color='E5E7EB'),
+        bottom=Side(style='thin', color='E5E7EB')
+    )
+    header_fill = PatternFill(fill_type='solid', fgColor='1F4E78')
+    label_fill = PatternFill(fill_type='solid', fgColor='EEF3FA')
+    header_font = Font(name='Microsoft YaHei', bold=True, color='FFFFFF')
+    body_font = Font(name='Microsoft YaHei', color='111827')
+    label_font = Font(name='Microsoft YaHei', bold=True, color='1F4E78')
+    center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    left_align = Alignment(horizontal='left', vertical='center', wrap_text=True)
+    top_left_align = Alignment(horizontal='left', vertical='top', wrap_text=True)
+
+    for column in range(1, 3):
+        cell = sheet.cell(row=1, column=column)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center_align
+        cell.border = thin_border
+
+    for row in range(2, 12):
+        label_cell = sheet.cell(row=row, column=1)
+        value_cell = sheet.cell(row=row, column=2)
+        label_cell.fill = label_fill
+        label_cell.font = label_font
+        label_cell.alignment = left_align
+        label_cell.border = thin_border
+        value_cell.font = body_font
+        value_cell.alignment = left_align
+        value_cell.border = thin_border
+
+    for column in range(1, 5):
+        cell = sheet.cell(row=data_start_row, column=column)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center_align
+        cell.border = thin_border
+
+    for row in range(data_start_row + 1, sheet.max_row + 1):
+        for column in range(1, 5):
+            cell = sheet.cell(row=row, column=column)
+            cell.font = body_font
+            cell.border = thin_border
+            if column in {1, 2, 3}:
+                cell.alignment = center_align if column != 2 else left_align
+            else:
+                cell.alignment = top_left_align
+
+        level_cell = sheet.cell(row=row, column=3)
+        level_value = str(level_cell.value or '').lower()
+        if level_value == 'info':
+            level_cell.fill = PatternFill(fill_type='solid', fgColor='E8F5E9')
+            level_cell.font = Font(name='Microsoft YaHei', bold=True, color='1B5E20')
+        elif level_value == 'warn':
+            level_cell.fill = PatternFill(fill_type='solid', fgColor='FFF7E6')
+            level_cell.font = Font(name='Microsoft YaHei', bold=True, color='9A6700')
+        elif level_value == 'error':
+            level_cell.fill = PatternFill(fill_type='solid', fgColor='FDECEA')
+            level_cell.font = Font(name='Microsoft YaHei', bold=True, color='B42318')
+
+    sheet.freeze_panes = f'A{data_start_row + 1}'
+    sheet.auto_filter.ref = f'A{data_start_row}:D{max(data_start_row, sheet.max_row)}'
+    sheet.sheet_view.showGridLines = False
 
 
 def _normalize_data_schedule_scope(raw_scope):
@@ -794,6 +1563,7 @@ def _paginate_data_schedule_records(records, current, size):
 def _build_data_schedule_export_binary(task_id, scope):
     try:
         from openpyxl import Workbook
+        from openpyxl.worksheet.hyperlink import Hyperlink
     except Exception as exc:
         logger.exception('openpyxl import failed: %s', exc)
         raise
@@ -841,10 +1611,11 @@ def _build_data_schedule_export_binary(task_id, scope):
         columns = drilldown_payload.get('columns') or []
         drilldown_sheet.append([col.get('title') or col.get('key') or '' for col in columns] + ['操作'])
         for row in drilldown_payload.get('records') or []:
-            row_values = [row.get(col.get('key') or '', '--') for col in columns]
+            row_values = [_to_excel_cell_value(row.get(col.get('key') or '', '--')) for col in columns]
             row_values.append('编辑 / 删除')
             drilldown_sheet.append(row_values)
         drilldown_sheet.freeze_panes = 'A2'
+        _style_data_schedule_drilldown_sheet(drilldown_sheet)
 
     for index, field in enumerate(filtered_fields, start=2):
         status_value = field.get('status')
@@ -856,9 +1627,9 @@ def _build_data_schedule_export_binary(task_id, scope):
             status_text = status_value or ''
 
         field_sheet.append([
-            field.get('fieldName') or '',
-            field.get('fieldValueDisplay') or '--',
-            status_text,
+            _to_excel_cell_value(field.get('fieldName') or ''),
+            _to_excel_cell_value(field.get('fieldValueDisplay') or '--'),
+            _to_excel_cell_value(status_text),
             '编辑'
         ])
 
@@ -866,10 +1637,15 @@ def _build_data_schedule_export_binary(task_id, scope):
         if field_key in drilldown_sheet_map:
             value_cell = field_sheet.cell(row=index, column=2)
             value_cell.value = '查看'
-            value_cell.hyperlink = f"#{drilldown_sheet_map[field_key]}!A1"
-            value_cell.style = 'Hyperlink'
+            value_cell.hyperlink = Hyperlink(
+                ref=value_cell.coordinate,
+                location=_build_excel_internal_link(drilldown_sheet_map[field_key], 'A1').lstrip('#'),
+                display='查看'
+            )
 
     field_sheet.freeze_panes = 'A2'
+    _style_data_schedule_summary_sheet(summary_sheet)
+    _style_data_schedule_field_sheet(field_sheet)
 
     output = io.BytesIO()
     workbook.save(output)
@@ -1776,6 +2552,134 @@ def health_check(_request):
 
 @swagger_auto_schema(
     method='get',
+    operation_description='获取项目状态汇总（参考 ai-audit-agent 口径）',
+    responses={200: '获取成功', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_project_status_summary(_request):
+    try:
+        rows = _build_project_status_rows()
+        return success_response(_build_project_summary_payload(rows), '获取成功')
+    except Exception as exc:
+        logger.exception('get project status summary failed: %s', exc)
+        return error_response('项目状态汇总查询失败，请检查数据库连接', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='获取单项目状态明细（参考 ai-audit-agent 口径）',
+    responses={200: '获取成功', 404: '项目不存在', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_project_status_detail(_request, project_id):
+    normalized_project_id = _to_str(project_id)
+    if not normalized_project_id:
+        return error_response('projectId 不能为空', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    try:
+        rows = _build_project_status_rows()
+    except Exception as exc:
+        logger.exception('get project status detail failed: %s', exc)
+        return error_response('项目状态查询失败，请检查数据库连接', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    matched = next((item for item in rows if item.get('projectId') == normalized_project_id), None)
+    if matched is None:
+        return error_response('项目不存在', ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+
+    return success_response(matched, '获取成功')
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='获取项目状态排名（用于数据概览 TOP20）',
+    manual_parameters=[
+        openapi.Parameter(
+            'category',
+            openapi.IN_QUERY,
+            description='分类：completed/running/remaining/abnormal',
+            type=openapi.TYPE_STRING
+        ),
+        openapi.Parameter('startTime', openapi.IN_QUERY, description='开始时间，支持 YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss', type=openapi.TYPE_STRING),
+        openapi.Parameter('endTime', openapi.IN_QUERY, description='结束时间，支持 YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss', type=openapi.TYPE_STRING),
+        openapi.Parameter('limit', openapi.IN_QUERY, description='返回条数，默认20，最大100', type=openapi.TYPE_INTEGER),
+    ],
+    responses={200: '获取成功', 400: '参数错误', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_project_status_ranking(request):
+    category = _normalize_ranking_category(request.query_params.get('category'))
+    if category is None:
+        return error_response(
+            'category 参数无效，仅支持 completed/running/remaining/abnormal',
+            ERROR_CODE_INVALID_PARAMS,
+            status.HTTP_400_BAD_REQUEST
+        )
+
+    raw_start_time = request.query_params.get('startTime')
+    raw_end_time = request.query_params.get('endTime')
+    start_time = _parse_datetime_value(raw_start_time)
+    end_time = _parse_datetime_value(raw_end_time)
+    if raw_start_time and start_time is None:
+        return error_response('startTime 格式无效', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+    if raw_end_time and end_time is None:
+        return error_response('endTime 格式无效', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+    # Date-only endTime should cover the full day.
+    if raw_end_time and end_time and len(str(raw_end_time).strip()) == 10:
+        end_time = end_time + timedelta(days=1) - timedelta(seconds=1)
+    if start_time and end_time and start_time > end_time:
+        return error_response('startTime 不能晚于 endTime', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    limit = _parse_positive_int(
+        request.query_params.get('limit'),
+        default=PROJECT_STATUS_RANKING_DEFAULT_LIMIT,
+        max_value=PROJECT_STATUS_RANKING_MAX_LIMIT
+    )
+
+    try:
+        rows = _build_project_status_rows()
+    except Exception as exc:
+        logger.exception('get project status ranking failed: %s', exc)
+        return error_response('项目状态排名查询失败，请检查数据库连接', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    category_rows = [row for row in rows if _status_match_ranking_category(category, _to_str(row.get('status')).upper())]
+    category_rows = _filter_project_status_rows_by_time(category_rows, start_time, end_time)
+
+    if category == PROJECT_STATUS_CATEGORY_REMAINING:
+        category_rows.sort(key=lambda item: (_to_str(item.get('projectName')) or _to_str(item.get('projectId'))))
+    else:
+        category_rows.sort(
+            key=lambda item: (
+                _parse_datetime_value(item.get('latestTaskUpdatedAt')) or datetime.min,
+                _to_str(item.get('projectId'))
+            ),
+            reverse=True
+        )
+
+    records = []
+    for idx, item in enumerate(category_rows[:limit], start=1):
+        records.append({
+            'rank': idx,
+            'projectId': item.get('projectId'),
+            'name': _to_str(item.get('projectName')) or _to_str(item.get('projectId')),
+            'completeTime': item.get('latestTaskUpdatedAt'),
+            'status': item.get('status'),
+        })
+
+    return success_response(
+        {
+            'category': category,
+            'total': len(category_rows),
+            'records': records,
+        },
+        '获取成功'
+    )
+
+
+@swagger_auto_schema(
+    method='get',
     operation_description='获取数据调度任务提取结果概览',
     responses={200: '获取成功', 401: '未认证'}
 )
@@ -1816,6 +2720,50 @@ def get_data_schedule_extract_fields(request, task_id):
     paginated_data['counts'] = _build_data_schedule_counts(all_fields)
 
     return success_response(paginated_data, '获取成功')
+
+
+@swagger_auto_schema(
+    method='patch',
+    operation_description='更新数据调度任务字段内容',
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['fieldValue'],
+        properties={
+            'fieldValue': openapi.Schema(type=openapi.TYPE_STRING, description='字段内容'),
+        }
+    ),
+    responses={200: '更新成功', 400: '参数错误', 404: '字段不存在', 401: '未认证'}
+)
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def update_data_schedule_extract_field(request, task_id, field_key):
+    normalized_field_key = str(field_key or '').strip()
+    if not normalized_field_key:
+        return error_response('fieldKey 不能为空', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    all_fields = _get_data_schedule_fields(task_id)
+    field_map = {item.get('fieldKey'): item for item in all_fields}
+    field_item = field_map.get(normalized_field_key)
+    if not field_item:
+        return error_response('字段不存在', ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+    if not field_item.get('canEdit'):
+        return error_response('当前字段不支持编辑', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    raw_field_value = request.data.get('fieldValue')
+    if raw_field_value is None:
+        return error_response('fieldValue 不能为空', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    field_value = str(raw_field_value)
+    if len(field_value) > DATA_SCHEDULE_FIELD_VALUE_MAX_LENGTH:
+        return error_response(
+            f'fieldValue 长度不能超过{DATA_SCHEDULE_FIELD_VALUE_MAX_LENGTH}个字符',
+            ERROR_CODE_INVALID_PARAMS,
+            status.HTTP_400_BAD_REQUEST
+        )
+
+    _update_data_schedule_field_value(task_id, normalized_field_key, field_value)
+    field_item['fieldValueDisplay'] = field_value
+    return success_response(_to_data_schedule_field_record(field_item), '更新成功')
 
 
 @swagger_auto_schema(
@@ -1878,6 +2826,113 @@ def get_data_schedule_extract_drilldown(request, task_id):
 
 
 @swagger_auto_schema(
+    method='post',
+    operation_description='新增下钻行',
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['fieldKey'],
+        properties={
+            'fieldKey': openapi.Schema(type=openapi.TYPE_STRING, description='字段标识'),
+            'rowData': openapi.Schema(type=openapi.TYPE_OBJECT, description='行数据，key 为下钻列 key'),
+        }
+    ),
+    responses={200: '新增成功', 400: '参数错误', 404: '字段不存在', 401: '未认证'}
+)
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def create_data_schedule_extract_drilldown_row(request, task_id):
+    field_key = str(request.data.get('fieldKey') or '').strip()
+    field_item, payload, err_msg, http_status, err_code = _get_data_schedule_drilldown_payload(task_id, field_key)
+    if err_msg:
+        return error_response(err_msg, err_code, http_status)
+
+    columns = payload.get('columns') or []
+    normalized_row, normalize_err = _normalize_drilldown_row_data(request.data.get('rowData'), columns)
+    if normalize_err:
+        return error_response(normalize_err, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    records = payload.setdefault('records', [])
+    row_id = _get_next_drilldown_row_id(records)
+    created_row = {'id': row_id}
+    created_row.update(normalized_row)
+    records.append(created_row)
+
+    response_data = {
+        'fieldKey': field_item.get('fieldKey') or field_key,
+        'record': created_row
+    }
+    return success_response(response_data, '新增成功')
+
+
+@swagger_auto_schema(
+    method='patch',
+    operation_description='编辑下钻行',
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['fieldKey'],
+        properties={
+            'fieldKey': openapi.Schema(type=openapi.TYPE_STRING, description='字段标识'),
+            'rowData': openapi.Schema(type=openapi.TYPE_OBJECT, description='行数据，key 为下钻列 key'),
+        }
+    ),
+    responses={200: '更新成功', 400: '参数错误', 404: '字段或行不存在', 401: '未认证'}
+)
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def update_data_schedule_extract_drilldown_row(request, task_id, row_id):
+    field_key = str(request.data.get('fieldKey') or '').strip()
+    field_item, payload, err_msg, http_status, err_code = _get_data_schedule_drilldown_payload(task_id, field_key)
+    if err_msg:
+        return error_response(err_msg, err_code, http_status)
+
+    records = payload.get('records') or []
+    target_row = _find_drilldown_row(records, row_id)
+    if not target_row:
+        return error_response('下钻行不存在', ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+
+    columns = payload.get('columns') or []
+    normalized_row, normalize_err = _normalize_drilldown_row_data(request.data.get('rowData'), columns)
+    if normalize_err:
+        return error_response(normalize_err, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    target_row.update(normalized_row)
+    response_data = {
+        'fieldKey': field_item.get('fieldKey') or field_key,
+        'record': target_row
+    }
+    return success_response(response_data, '更新成功')
+
+
+@swagger_auto_schema(
+    method='delete',
+    operation_description='删除下钻行',
+    manual_parameters=[
+        openapi.Parameter('fieldKey', openapi.IN_QUERY, description='字段标识', type=openapi.TYPE_STRING, required=True),
+    ],
+    responses={200: '删除成功', 400: '参数错误', 404: '字段或行不存在', 401: '未认证'}
+)
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def delete_data_schedule_extract_drilldown_row(request, task_id, row_id):
+    field_key = str(request.query_params.get('fieldKey') or '').strip()
+    field_item, payload, err_msg, http_status, err_code = _get_data_schedule_drilldown_payload(task_id, field_key)
+    if err_msg:
+        return error_response(err_msg, err_code, http_status)
+
+    records = payload.get('records') or []
+    target_row = _find_drilldown_row(records, row_id)
+    if not target_row:
+        return error_response('下钻行不存在', ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+
+    payload['records'] = [item for item in records if item is not target_row]
+    response_data = {
+        'fieldKey': field_item.get('fieldKey') or field_key,
+        'rowId': row_id
+    }
+    return success_response(response_data, '删除成功')
+
+
+@swagger_auto_schema(
     method='get',
     operation_description='导出数据调度提取结果（xlsx，支持下钻 Sheet 跳转）',
     manual_parameters=[
@@ -1892,11 +2947,43 @@ def export_data_schedule_extract_result(request, task_id):
     if scope is None:
         return error_response('scope 参数无效，仅支持 all/complete/missing', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
 
+    query_snapshot = _get_request_query_snapshot(request)
+    _append_data_schedule_export_log(
+        'info',
+        'extract_export_started',
+        task_id=task_id,
+        scope=scope,
+        request_params=query_snapshot
+    )
+
     try:
         binary = _build_data_schedule_export_binary(task_id, scope)
-    except Exception:
+    except Exception as exc:
         logger.exception('build data schedule export failed, task_id=%s, scope=%s', task_id, scope)
+        _append_data_schedule_export_log(
+            'error',
+            'extract_export_failed',
+            task_id=task_id,
+            scope=scope,
+            request_params=query_snapshot,
+            error=exc
+        )
+        if isinstance(exc, (ImportError, ModuleNotFoundError)):
+            return error_response(
+                '导出失败：Excel 导出依赖缺失，请检查 openpyxl 安装',
+                ERROR_CODE_INVALID_PARAMS,
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
         return error_response('导出失败，请稍后重试', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    _append_data_schedule_export_log(
+        'info',
+        'extract_export_succeeded',
+        task_id=task_id,
+        scope=scope,
+        request_params=query_snapshot,
+        extra={'bytes': len(binary)}
+    )
 
     filename = quote(f'data-schedule-{task_id}-{scope}.xlsx')
     response = HttpResponse(
@@ -1984,6 +3071,15 @@ def export_data_schedule_logs(request, task_id):
     if err_msg:
         return error_response(err_msg, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
 
+    query_snapshot = _get_request_query_snapshot(request)
+    _append_data_schedule_export_log(
+        'info',
+        'task_logs_export_started',
+        task_id=task_id,
+        scope='logs',
+        request_params=query_snapshot
+    )
+
     task_meta = _get_data_schedule_log_meta(task_id)
     records = _build_data_schedule_log_records(task_id)
     filtered_records = _filter_data_schedule_logs(records, filters)
@@ -1993,9 +3089,32 @@ def export_data_schedule_logs(request, task_id):
 
     try:
         binary = _build_data_schedule_log_export_binary(task_meta, filters, sliced_records)
-    except Exception:
+    except Exception as exc:
         logger.exception('build data schedule logs export failed, task_id=%s', task_id)
+        _append_data_schedule_export_log(
+            'error',
+            'task_logs_export_failed',
+            task_id=task_id,
+            scope='logs',
+            request_params=query_snapshot,
+            error=exc
+        )
+        if isinstance(exc, (ImportError, ModuleNotFoundError)):
+            return error_response(
+                '导出失败：Excel 导出依赖缺失，请检查 openpyxl 安装',
+                ERROR_CODE_INVALID_PARAMS,
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
         return error_response('导出失败，请稍后重试', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    _append_data_schedule_export_log(
+        'info',
+        'task_logs_export_succeeded',
+        task_id=task_id,
+        scope='logs',
+        request_params=query_snapshot,
+        extra={'bytes': len(binary)}
+    )
 
     filename = quote(f'data-schedule-log-{task_id}.xlsx')
     response = HttpResponse(
@@ -2004,6 +3123,29 @@ def export_data_schedule_logs(request, task_id):
     )
     response['Content-Disposition'] = f"attachment; filename*=UTF-8''{filename}"
     return response
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='获取数据调度导出调试日志（按行读取）',
+    manual_parameters=[
+        openapi.Parameter('lines', openapi.IN_QUERY, description='返回日志行数，默认200，最大2000', type=openapi.TYPE_INTEGER),
+        openapi.Parameter('keyword', openapi.IN_QUERY, description='关键字过滤（可选）', type=openapi.TYPE_STRING),
+    ],
+    responses={200: '获取成功', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_data_schedule_export_debug_logs(request):
+    lines = _parse_positive_int(request.query_params.get('lines'), default=200, max_value=2000)
+    keyword = str(request.query_params.get('keyword') or '').strip()
+    records = _read_data_schedule_export_log_records(lines, keyword)
+    data = {
+        'file': str(DATA_SCHEDULE_EXPORT_LOG_FILE),
+        'records': records,
+        'total': len(records)
+    }
+    return success_response(data, '获取成功')
 
 
 @swagger_auto_schema(

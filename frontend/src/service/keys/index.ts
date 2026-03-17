@@ -34,6 +34,13 @@ export const QUERY_KEYS = {
     EXTRACT_SUMMARY: (taskId: string) => ['dataSchedule', 'extractSummary', taskId] as const,
     LOG_META: (taskId: string) => ['dataSchedule', 'logMeta', taskId] as const,
     LOG_LIST: (params: Api.DataSchedule.TaskLogListParams | null) => ['dataSchedule', 'logList', params] as const
+  },
+  // Data Overview
+  DATA_OVERVIEW: {
+    PROJECT_STATUS_DETAIL: (projectId: string) => ['dataOverview', 'projectStatusDetail', projectId] as const,
+    PROJECT_STATUS_RANKING: (params: Api.DataOverview.ProjectStatusRankingParams) =>
+      ['dataOverview', 'projectStatusRanking', params] as const,
+    PROJECT_STATUS_SUMMARY: ['dataOverview', 'projectStatusSummary'] as const
   }
 } as const;
 

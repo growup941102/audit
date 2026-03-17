@@ -43,6 +43,16 @@
   - `/api/systemManage/updateWebsiteSettings`
   - `/api/systemManage/getWatermarkSettings`
 
+### 数据概览相关
+- 后端接口包括：
+  - `/api/admin/projects/status/summary/`
+  - `/api/admin/projects/{projectId}/status/`
+  - `/api/admin/projects/status/ranking/`
+- 约定说明：
+  - `summary` 用于概览 KPI（总数/运行中/成功/失败/待处理）。
+  - `project status` 用于单项目状态详情（状态标签、步骤、错误、文件统计）。
+  - `ranking` 用于概览 TOP20（按 `category` + 时间范围过滤）。
+
 ## 5. 契约维护检查清单
 - 后端字段名变化时，同步更新前端请求/响应类型定义。
 - 后端路径变化时，同步更新前端 URL 常量与 service 封装。
@@ -64,4 +74,3 @@
 3. 用户确认后再开始编码。
 4. 前后端契约一起更新。
 5. 同步补充便于前端开发者快速阅读的变更说明。
-

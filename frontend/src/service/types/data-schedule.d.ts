@@ -46,6 +46,12 @@ declare namespace Api {
       scope: Scope;
     };
 
+    type FieldUpdateParams = {
+      fieldKey: string;
+      fieldValue: string;
+      taskId: string;
+    };
+
     type DrilldownColumn = {
       editable?: boolean;
       key: string;
@@ -75,6 +81,27 @@ declare namespace Api {
       fieldKey: string;
       scope: Scope;
       title: string;
+    };
+
+    type DrilldownRowPayload = Record<string, string | number | boolean | null>;
+
+    type CreateDrilldownRowParams = {
+      fieldKey: string;
+      rowData: DrilldownRowPayload;
+      taskId: string;
+    };
+
+    type UpdateDrilldownRowParams = {
+      fieldKey: string;
+      rowData: DrilldownRowPayload;
+      rowId: number;
+      taskId: string;
+    };
+
+    type DeleteDrilldownRowParams = {
+      fieldKey: string;
+      rowId: number;
+      taskId: string;
     };
 
     type ExportParams = {
