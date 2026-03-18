@@ -10,8 +10,10 @@ interface KpiItemProps {
   value: number;
 }
 
-function useGetKpiData(summary: Api.DataOverview.ProjectStatusSummary): KpiItemProps[] {
-  const { t } = useTranslation();
+function getKpiData(
+  summary: Api.DataOverview.ProjectStatusSummary,
+  t: ReturnType<typeof useTranslation>['t']
+): KpiItemProps[] {
   const totalProjects = summary.totalProjects;
 
   function calcPercent(value: number) {
@@ -104,6 +106,7 @@ const KpiCardItem = (item: KpiItemProps) => {
 };
 
 const KpiCards = () => {
+  const { t } = useTranslation();
   const summaryQuery = useProjectStatusSummary();
   if (summaryQuery.error) {
     throw summaryQuery.error;
@@ -116,7 +119,7 @@ const KpiCards = () => {
     );
   }
 
-  const kpiList = useGetKpiData(summaryQuery.data);
+  const kpiList = getKpiData(summaryQuery.data, t);
 
   return (
     <ARow gutter={[16, 16]}>

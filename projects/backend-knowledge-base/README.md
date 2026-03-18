@@ -13,6 +13,8 @@
 - `api-module-map.md`：`backend/api` Django 应用的职责地图
 - `frontend-backend-contracts.md`：当前前后端接口契约说明
 - `ai-audit-agent-reference.md`：`gxxm/ai-audit-agent` 数据库、状态接口、Nacos 配置参考
+- `page-api-index.md`：按前端页面维度组织的接口文档索引
+- `page-api-data-overview.md`：数据概览页接口文档（包含 summary/detail/ranking 与编写示例）
 
 ## 推荐使用方式
 1. 开始新的后端需求前，先读 `backend-overview.md`。

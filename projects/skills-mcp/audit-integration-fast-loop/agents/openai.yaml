@@ -1,0 +1,5 @@
+interface:
+  display_name: "Audit Integration Fast Loop"
+  short_description: "联调修复阶段的高效沟通与闭环节奏技能"
+  default_prompt: "使用 $audit-integration-fast-loop 处理当前联调问题，按问题卡模板高频同步进展并明确决策门禁。"
+

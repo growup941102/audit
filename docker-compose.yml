@@ -12,7 +12,7 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
     ports:
-      - "${MYSQL_PORT_EXPOSE:-33603}:3306"
+      - "${MYSQL_PORT_EXPOSE:-3306}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
@@ -47,9 +47,16 @@ services:
       INIT_ADMIN_PASSWORD: ${INIT_ADMIN_PASSWORD:-cmcc@tj10086}
       INIT_ADMIN_EMAIL: ${INIT_ADMIN_EMAIL:-admin@example.com}
       TZ: ${TZ:-Asia/Shanghai}
+      # When pointing Django at a remote DB, set DJANGO_DB_INIT=0 to avoid running
+      # migrate/init_auth_data automatically (prevents unintended writes).
+      DJANGO_DB_INIT: ${DJANGO_DB_INIT:-1}
     command: >
-      sh -c "python manage.py migrate &&
-             python manage.py init_auth_data &&
+      sh -c "if [ \"${DJANGO_DB_INIT}\" = \"1\" ]; then
+               python manage.py migrate &&
+               python manage.py init_auth_data;
+             else
+               echo \"DJANGO_DB_INIT=0: skip migrate/init_auth_data\";
+             fi &&
              python manage.py runserver 0.0.0.0:8000"
     ports:
       - "${BACKEND_PORT:-8000}:8000"

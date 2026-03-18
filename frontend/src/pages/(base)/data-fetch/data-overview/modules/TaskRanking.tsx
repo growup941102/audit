@@ -74,10 +74,6 @@ const TaskRanking = () => {
     [rankingQuery.data?.records]
   );
 
-  if (rankingQuery.error) {
-    throw rankingQuery.error;
-  }
-
   const { leftList, rightList } = useMemo(
     () => ({
       leftList: rankingData.slice(0, 10),
@@ -96,6 +92,10 @@ const TaskRanking = () => {
       stopRefreshing();
     }
   });
+
+  if (rankingQuery.error) {
+    throw rankingQuery.error;
+  }
 
   const loading = refreshing || rankingQuery.isFetching;
 

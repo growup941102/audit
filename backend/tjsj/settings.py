@@ -63,12 +63,12 @@ WSGI_APPLICATION = 'tjsj.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': os.getenv('MYSQL_DATABASE', 'tjsj'),
+        'NAME': os.getenv('MYSQL_DATABASE', 'audit_agent'),
         # Keep compatibility with different env naming conventions.
         'USER': os.getenv('MYSQL_USERNAME', os.getenv('MYSQL_USER', 'root')),
-        'PASSWORD': os.getenv('MYSQL_PASSWORD', 'mysql123'),
-        'HOST': os.getenv('MYSQL_HOST', os.getenv('DB_HOST', 'db')),
-        'PORT': os.getenv('MYSQL_PORT', os.getenv('DB_PORT', '3306')),
+        'PASSWORD': os.getenv('MYSQL_PASSWORD', 'root123'),
+        'HOST': os.getenv('MYSQL_HOST', os.getenv('DB_HOST', '10.1.221.233')),
+        'PORT': os.getenv('MYSQL_PORT', os.getenv('DB_PORT', '33603')),
         'OPTIONS': {
             'charset': 'utf8mb4',
         },
