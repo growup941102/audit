@@ -1,7 +1,7 @@
 import { globalConfig } from '@/config';
 
-import { getAuthorization } from '../request/shared';
 import { request } from '../request';
+import { getAuthorization } from '../request/shared';
 import { DATA_SCHEDULE_URLS } from '../urls';
 
 function parseFileNameFromDisposition(disposition: string, fallback: string) {
@@ -66,11 +66,45 @@ function buildDataScheduleLogQuery(params: Omit<Api.DataSchedule.TaskLogListPara
   return query;
 }
 
+/** get data schedule creator options */
+export function fetchDataScheduleCreatorOptions(keyword?: string) {
+  return request<Api.DataSchedule.CreatorOption[]>({
+    method: 'get',
+    params: keyword ? { keyword } : undefined,
+    url: DATA_SCHEDULE_URLS.GET_CREATORS
+  });
+}
+
+/** get data schedule select-data tree */
+export function fetchDataScheduleSelectData() {
+  return request<Api.DataSchedule.SelectDataPayload>({
+    method: 'get',
+    url: DATA_SCHEDULE_URLS.GET_SELECT_DATA
+  });
+}
+
+/** get data schedule task list */
+export function fetchDataScheduleTasks(params?: Api.DataSchedule.TaskListParams) {
+  return request<Api.DataSchedule.TaskList>({
+    method: 'get',
+    params,
+    url: DATA_SCHEDULE_URLS.GET_TASK_LIST
+  });
+}
+
 /** get extract result summary */
 export function fetchDataScheduleExtractSummary(taskId: string) {
   return request<Api.DataSchedule.TaskSummary>({
     method: 'get',
     url: DATA_SCHEDULE_URLS.GET_EXTRACT_SUMMARY(taskId)
+  });
+}
+
+/** get data schedule task detail */
+export function fetchDataScheduleTaskDetail(taskId: string) {
+  return request<Api.DataSchedule.TaskDetail>({
+    method: 'get',
+    url: DATA_SCHEDULE_URLS.GET_TASK_DETAIL(taskId)
   });
 }
 

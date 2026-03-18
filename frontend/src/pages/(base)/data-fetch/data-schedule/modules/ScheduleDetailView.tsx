@@ -1,3 +1,4 @@
+import { DownloadOutlined, EyeOutlined, LoadingOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 
 import {
@@ -10,9 +11,8 @@ import {
 import {
   useDataScheduleExtractDrilldown,
   useDataScheduleExtractFields,
-  useDataScheduleExtractSummary,
+  useDataScheduleTaskDetail,
 } from "@/service/hooks";
-import { DownloadOutlined, EyeOutlined, LoadingOutlined } from "@ant-design/icons";
 
 interface Props {
   readonly onBack: () => void;
@@ -42,6 +42,7 @@ const statusI18nMap: Record<string, string> = {
 
 const scopes: Api.DataSchedule.Scope[] = ["all", "complete", "missing"];
 
+// eslint-disable-next-line complexity
 const ScheduleDetailView = ({ onBack, taskId }: Props) => {
   const { t } = useTranslation();
   const [scope, setScope] = useState<Api.DataSchedule.Scope>("all");
@@ -57,7 +58,7 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
   const [deletingDrilldownRowId, setDeletingDrilldownRowId] = useState<number | null>(null);
   const [drilldownRowForm] = AForm.useForm<Record<string, string>>();
 
-  const summaryQuery = useDataScheduleExtractSummary(taskId);
+  const detailQuery = useDataScheduleTaskDetail(taskId);
   const fieldsQuery = useDataScheduleExtractFields({
     current: fieldCurrent,
     scope,
@@ -76,7 +77,7 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
       : null,
   );
 
-  const summary = summaryQuery.data;
+  const summary = detailQuery.data;
   const fieldList = fieldsQuery.data;
   const drilldown = drilldownQuery.data;
   const counts = summary?.counts ||
@@ -250,7 +251,7 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
     const editValues: Record<string, string> = {};
     columns.forEach(column => {
       const value = record[column.key];
-      editValues[column.key] = value == null ? "" : String(value);
+      editValues[column.key] = value === null || value === undefined ? "" : String(value);
     });
     drilldownRowForm.setFieldsValue(editValues);
     setDrilldownRowModal({ mode: "edit", rowId });
@@ -414,7 +415,7 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
           }
           variant="borderless"
         >
-          {summaryQuery.isLoading ? (
+          {detailQuery.isLoading ? (
             <ASkeleton active paragraph={{ rows: 4 }} />
           ) : (
             <div className="flex-col gap-12px">

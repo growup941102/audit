@@ -1,13 +1,32 @@
 import { useQuery } from '@tanstack/react-query';
 
 import {
+  fetchDataScheduleCreatorOptions,
   fetchDataScheduleExtractDrilldown,
   fetchDataScheduleExtractFields,
   fetchDataScheduleExtractSummary,
   fetchDataScheduleLogs,
-  fetchDataScheduleLogsMeta
+  fetchDataScheduleLogsMeta,
+  fetchDataScheduleSelectData,
+  fetchDataScheduleTaskDetail
 } from '../api';
 import { QUERY_KEYS } from '../keys';
+
+/** get creator options hook */
+export function useDataScheduleCreatorOptions(keyword?: string) {
+  return useQuery({
+    queryFn: () => fetchDataScheduleCreatorOptions(keyword),
+    queryKey: ['dataSchedule', 'creatorOptions', keyword || '']
+  });
+}
+
+/** get select-data tree hook */
+export function useDataScheduleSelectData() {
+  return useQuery({
+    queryFn: fetchDataScheduleSelectData,
+    queryKey: QUERY_KEYS.DATA_SCHEDULE.SELECT_DATA
+  });
+}
 
 /** get extract result summary hook */
 export function useDataScheduleExtractSummary(taskId: string | null | undefined) {
@@ -15,6 +34,15 @@ export function useDataScheduleExtractSummary(taskId: string | null | undefined)
     enabled: Boolean(taskId),
     queryFn: () => fetchDataScheduleExtractSummary(taskId as string),
     queryKey: QUERY_KEYS.DATA_SCHEDULE.EXTRACT_SUMMARY(taskId || '')
+  });
+}
+
+/** get task detail hook */
+export function useDataScheduleTaskDetail(taskId: string | null | undefined) {
+  return useQuery({
+    enabled: Boolean(taskId),
+    queryFn: () => fetchDataScheduleTaskDetail(taskId as string),
+    queryKey: ['dataSchedule', 'taskDetail', taskId || '']
   });
 }
 

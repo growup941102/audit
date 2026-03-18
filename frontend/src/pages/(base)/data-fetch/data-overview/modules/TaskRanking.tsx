@@ -1,5 +1,6 @@
 import dayjs from 'dayjs';
 
+import { useRouter } from '@/features/router';
 import { useProjectStatusRanking } from '@/service/hooks';
 
 interface RankingCategory {
@@ -12,6 +13,13 @@ interface RankItemData {
   name: string;
   rank: number;
 }
+
+const rankingCategoryToScheduleStatus: Record<Api.DataOverview.RankingCategory, string[]> = {
+  abnormal: ['failed'],
+  completed: ['success'],
+  remaining: ['pending'],
+  running: ['running']
+};
 
 function useRankingCategories(): RankingCategory[] {
   const { t } = useTranslation();
@@ -53,6 +61,7 @@ const RankItem = memo(({ item }: { item: RankItemData }) => {
 
 const TaskRanking = () => {
   const { t } = useTranslation();
+  const { push } = useRouter();
   const rankingCategories = useRankingCategories();
   const [activeKey, setActiveKey] = useState<Api.DataOverview.RankingCategory>('completed');
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs]>([dayjs().subtract(6, 'day'), dayjs()]);
@@ -91,6 +100,12 @@ const TaskRanking = () => {
     } finally {
       stopRefreshing();
     }
+  });
+
+  const handleViewMoreData = useMemoizedFn(() => {
+    push('/data-fetch/data-schedule', {
+      query: { taskStatus: rankingCategoryToScheduleStatus[activeKey] }
+    });
   });
 
   if (rankingQuery.error) {
@@ -164,7 +179,12 @@ const TaskRanking = () => {
         </div>
       </ASpin>
       <div className="mt-8px flex justify-center">
-        <AButton type="link">{t('page.dataOverview.viewMoreData')}</AButton>
+        <AButton
+          type="link"
+          onClick={handleViewMoreData}
+        >
+          {t('page.dataOverview.viewMoreData')}
+        </AButton>
       </div>
     </ACard>
   );

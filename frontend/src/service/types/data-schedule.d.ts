@@ -6,11 +6,40 @@
 declare namespace Api {
   namespace DataSchedule {
     type Scope = 'all' | 'complete' | 'missing';
+    type TaskStatus = 'failed' | 'paused' | 'pending' | 'running' | 'stopped' | 'success';
 
     type ScopeCounts = {
       all: number;
       complete: number;
       missing: number;
+    };
+
+    type CreatorOption = {
+      label: string;
+      value: string;
+    };
+
+    type SelectDataCatalog = {
+      description: string;
+      id: string;
+      name: string;
+    };
+
+    type SelectDataNode = {
+      catalogId: string;
+      children?: SelectDataNode[];
+      fileExt?: string;
+      fileSizeLabel?: string;
+      id: string;
+      itemCount?: number;
+      name: string;
+      parentId: string | null;
+      type: 'file' | 'folder';
+    };
+
+    type SelectDataPayload = {
+      catalogs: SelectDataCatalog[];
+      projectTreeByCatalogId: Record<string, SelectDataNode[]>;
     };
 
     type TaskSummary = {
@@ -23,6 +52,34 @@ declare namespace Api {
       status: string;
       taskId: string;
     };
+
+    type TaskDetail = TaskSummary & {
+      industry: string;
+      projectId: string;
+    };
+
+    type TaskListRecord = Common.CommonRecord<{
+      completeTime: string;
+      creator: string;
+      progress: number;
+      projectName: string;
+      taskId: string;
+      taskStatus: TaskStatus;
+    }>;
+
+    type TaskListParams = {
+      createEndTime?: string;
+      createStartTime?: string;
+      creator?: string | string[];
+      current?: number;
+      matchRangeMax?: number;
+      matchRangeMin?: number;
+      projectName?: string;
+      size?: number;
+      taskStatus?: TaskStatus | TaskStatus[];
+    };
+
+    type TaskList = Common.PaginatingQueryRecord<TaskListRecord>;
 
     type FieldRecord = {
       canDrilldown: boolean;

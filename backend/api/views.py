@@ -161,6 +161,22 @@ DATA_SCHEDULE_LOG_ORDER_DIRECTION_SET = {
 }
 DATA_SCHEDULE_LOG_DEFAULT_COUNT = 100
 DATA_SCHEDULE_LOG_MAX_COUNT = 1000
+DATA_SCHEDULE_TASK_DEFAULT_SIZE = 10
+DATA_SCHEDULE_TASK_MAX_SIZE = 100
+DATA_SCHEDULE_TASK_STATUS_PENDING = 'pending'
+DATA_SCHEDULE_TASK_STATUS_RUNNING = 'running'
+DATA_SCHEDULE_TASK_STATUS_SUCCESS = 'success'
+DATA_SCHEDULE_TASK_STATUS_FAILED = 'failed'
+DATA_SCHEDULE_TASK_STATUS_PAUSED = 'paused'
+DATA_SCHEDULE_TASK_STATUS_STOPPED = 'stopped'
+DATA_SCHEDULE_TASK_STATUS_SET = {
+    DATA_SCHEDULE_TASK_STATUS_PENDING,
+    DATA_SCHEDULE_TASK_STATUS_RUNNING,
+    DATA_SCHEDULE_TASK_STATUS_SUCCESS,
+    DATA_SCHEDULE_TASK_STATUS_FAILED,
+    DATA_SCHEDULE_TASK_STATUS_PAUSED,
+    DATA_SCHEDULE_TASK_STATUS_STOPPED,
+}
 DATA_SCHEDULE_LOG_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
 DATA_SCHEDULE_FIELD_VALUE_MAX_LENGTH = 5000
 DATA_SCHEDULE_DRILLDOWN_ROW_VALUE_MAX_LENGTH = 2000
@@ -169,6 +185,72 @@ DATA_SCHEDULE_EXPORT_LOG_FILE = DATA_SCHEDULE_EXPORT_LOG_DIR / 'data_schedule_ex
 API_FAILURE_LOG_FILE = DATA_SCHEDULE_EXPORT_LOG_DIR / 'api_failure.log'
 DATA_SCHEDULE_FIELD_OVERRIDE_STORE = {}
 DATA_SCHEDULE_REAL_SOURCE_ERROR = '数据调度真实数据源未接入，mock 兜底数据已移除'
+_TABLE_COLUMN_CACHE = {}
+_TABLE_COLUMN_META_CACHE = {}
+DATA_SCHEDULE_TASK_CREATOR_COLUMN_CANDIDATES = (
+    'creator',
+    'created_by',
+    'create_by',
+    'created_user',
+    'create_user',
+)
+DATA_SCHEDULE_TASK_CREATE_TIME_COLUMN_CANDIDATES = (
+    'created_at',
+    'create_time',
+    'created_time',
+    'create_at',
+)
+DATA_SCHEDULE_PROJECT_CREATOR_COLUMN_CANDIDATES = (
+    'creator',
+    'created_by',
+    'create_by',
+    'owner',
+)
+DATA_SCHEDULE_PROJECT_CREATE_TIME_COLUMN_CANDIDATES = (
+    'created_at',
+    'create_time',
+    'created_time',
+    'create_at',
+)
+PROJECT_LOGIC_DELETE_COLUMN_CANDIDATES = (
+    'is_deleted',
+    'logic_deleted',
+    'deleted',
+)
+DATA_SCHEDULE_DETAIL_SW = 'SW'
+DATA_SCHEDULE_DETAIL_JS = 'JS'
+DATA_SCHEDULE_DETAIL_INDUSTRY_SET = {
+    DATA_SCHEDULE_DETAIL_SW,
+    DATA_SCHEDULE_DETAIL_JS,
+}
+DATA_SCHEDULE_SW_PROJECT_INFO_TABLE = 'c_r_cm_engineering_sw_water_affairs_project_info'
+DATA_SCHEDULE_SW_SECTION_TABLE = 'c_r_cm_engineering_sw_water_affairs_prj_section'
+DATA_SCHEDULE_SW_TENDER_AGENT_TABLE = 'c_r_cm_engineering_sw_water_affairs_tender_agent'
+DATA_SCHEDULE_SW_EXPERT_TABLE = 'c_r_cm_engineering_sw_water_affairs_expert_info'
+DATA_SCHEDULE_SW_BID_SUBMISSION_TABLE = 'c_r_cm_engineering_sw_water_affairs_bid_submission'
+DATA_SCHEDULE_JS_PROJECT_INFO_TABLE = 'c_r_cm_engineering_js_general_project_info'
+DATA_SCHEDULE_JS_SECTION_TABLE = 'c_r_cm_engineering_js_general_prj_section'
+DATA_SCHEDULE_JS_BID_SUBMISSION_TABLE = 'c_r_cm_engineering_js_general_bid_submission'
+DATA_SCHEDULE_JS_EXPERT_TABLE = 'c_r_cm_engineering_js_general_expert_info'
+DATA_SCHEDULE_JS_OPENING_ATTENDEE_TABLE = 'c_r_cm_engineering_js_general_opening_attendee'
+DATA_SCHEDULE_DETAIL_EXCLUDED_COLUMN_SET = {
+    'create_at',
+    'create_time',
+    'created_at',
+    'created_time',
+    'gmt_create',
+    'gmt_modified',
+    'update_at',
+    'update_time',
+    'updated_at',
+    'updated_time',
+}
+DATA_SCHEDULE_SELECT_DATA_ROOT = '/home/tj'
+DATA_SCHEDULE_SELECT_DATA_CATALOG_ID = 'home_tj'
+DATA_SCHEDULE_PROJECT_ROOT_PATH_COLUMN_CANDIDATES = (
+    'root_path',
+    'rootPath',
+)
 
 PROJECT_STATUS_RUNNING_TASK_SET = {'RUNNING', 'CLAIMED', 'LOCKED'}
 PROJECT_STATUS_FAILED_TASK_SET = {'FAILED', 'CANCELLED'}
@@ -203,6 +285,418 @@ def _parse_positive_int(value, default=1, max_value=200):
 def _dictfetchall(cursor):
     columns = [col[0] for col in cursor.description or []]
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+def _get_table_columns(table_name):
+    cached = _TABLE_COLUMN_CACHE.get(table_name)
+    if cached is not None:
+        return cached
+
+    try:
+        with connection.cursor() as cursor:
+            description = connection.introspection.get_table_description(cursor, table_name)
+        columns = {
+            _to_str(getattr(column, 'name', column[0])).lower()
+            for column in (description or [])
+            if _to_str(getattr(column, 'name', column[0]))
+        }
+    except Exception as exc:
+        logger.warning('detect table columns failed, table=%s, error=%s', table_name, exc)
+        columns = set()
+
+    _TABLE_COLUMN_CACHE[table_name] = columns
+    return columns
+
+
+def _pick_existing_column(table_name, candidates):
+    table_columns = _get_table_columns(table_name)
+    if not table_columns:
+        return None
+
+    for column in candidates:
+        normalized = _to_str(column).lower()
+        if normalized and normalized in table_columns:
+            return column
+
+    return None
+
+
+def _table_has_column(table_name, column_name):
+    normalized_column = _to_str(column_name).lower()
+    if not normalized_column:
+        return False
+    return normalized_column in _get_table_columns(table_name)
+
+
+def _build_valid_project_where_clause(table_alias=''):
+    alias_prefix = f'{table_alias}.' if table_alias else ''
+    conditions = [
+        f"{alias_prefix}project_id IS NOT NULL",
+        f"{alias_prefix}project_id != ''",
+    ]
+
+    if _table_has_column('c_r_cm_project', 'industry'):
+        conditions.append(f"{alias_prefix}industry IS NOT NULL")
+        conditions.append(f"TRIM({alias_prefix}industry) != ''")
+
+    logic_delete_column = _pick_existing_column('c_r_cm_project', PROJECT_LOGIC_DELETE_COLUMN_CANDIDATES)
+    if logic_delete_column:
+        conditions.append(f"COALESCE({alias_prefix}{logic_delete_column}, 0) = 0")
+
+    return ' AND '.join(conditions)
+
+
+def _normalize_data_schedule_detail_industry(raw_value):
+    normalized = _to_str(raw_value).upper()
+    if normalized in DATA_SCHEDULE_DETAIL_INDUSTRY_SET:
+        return normalized
+    return ''
+
+
+def _normalize_data_schedule_project_root_path(raw_path):
+    normalized = _to_str(raw_path).replace('\\', '/').strip()
+    if not normalized:
+        return ''
+
+    while '//' in normalized:
+        normalized = normalized.replace('//', '/')
+
+    root_prefix = DATA_SCHEDULE_SELECT_DATA_ROOT.rstrip('/')
+    normalized_no_leading = normalized.lstrip('/')
+    root_no_leading = root_prefix.lstrip('/')
+
+    if normalized == root_prefix or normalized_no_leading == root_no_leading:
+        return ''
+
+    if root_prefix and normalized.startswith(f'{root_prefix}/'):
+        return normalized[len(root_prefix) + 1:].strip('/')
+
+    if root_no_leading and normalized_no_leading.startswith(f'{root_no_leading}/'):
+        return normalized_no_leading[len(root_no_leading) + 1:].strip('/')
+
+    return normalized_no_leading.strip('/')
+
+
+def _parse_data_schedule_project_root_segments(raw_path):
+    relative_path = _normalize_data_schedule_project_root_path(raw_path)
+    if not relative_path:
+        return []
+    return [item.strip() for item in relative_path.split('/') if item and item.strip()]
+
+
+def _data_schedule_tree_segment_sort_key(value):
+    normalized = _to_str(value)
+    if normalized.isdigit():
+        return 0, int(normalized)
+    return 1, normalized
+
+
+def _sort_data_schedule_tree_nodes(nodes):
+    nodes.sort(key=lambda item: _data_schedule_tree_segment_sort_key(item.get('name')))
+    for node in nodes:
+        children = node.get('children') or []
+        _sort_data_schedule_tree_nodes(children)
+
+
+def _fill_data_schedule_tree_item_count(nodes):
+    for node in nodes:
+        children = node.get('children') or []
+        _fill_data_schedule_tree_item_count(children)
+        node['itemCount'] = len(children)
+
+
+def _build_data_schedule_tree_nodes(raw_paths):
+    roots = []
+    node_index = {}
+
+    for raw_path in raw_paths:
+        segments = _parse_data_schedule_project_root_segments(raw_path)
+        if not segments:
+            continue
+
+        parent_key = None
+        siblings = roots
+        for index, segment in enumerate(segments):
+            node_key = '/'.join(segments[:index + 1])
+            node = node_index.get(node_key)
+            if node is None:
+                node = {
+                    'catalogId': DATA_SCHEDULE_SELECT_DATA_CATALOG_ID,
+                    'children': [],
+                    'id': node_key,
+                    'itemCount': 0,
+                    'name': segment,
+                    'parentId': parent_key,
+                    'type': 'folder',
+                }
+                node_index[node_key] = node
+                siblings.append(node)
+
+            parent_key = node_key
+            children = node.get('children')
+            if not isinstance(children, list):
+                children = []
+                node['children'] = children
+            siblings = children
+
+    _sort_data_schedule_tree_nodes(roots)
+    _fill_data_schedule_tree_item_count(roots)
+    return roots
+
+
+def _fetch_data_schedule_project_root_paths():
+    root_path_column = _pick_existing_column('c_r_cm_project', DATA_SCHEDULE_PROJECT_ROOT_PATH_COLUMN_CANDIDATES)
+    if not root_path_column:
+        return []
+
+    valid_project_where_clause = _build_valid_project_where_clause('p')
+    sql = (
+        f"SELECT DISTINCT p.{root_path_column} AS rootPath "
+        "FROM c_r_cm_project p "
+        f"WHERE {valid_project_where_clause} "
+        f"AND p.{root_path_column} IS NOT NULL "
+        f"AND TRIM(p.{root_path_column}) != ''"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
+        return _dictfetchall(cursor)
+
+
+def _build_data_schedule_select_data_payload():
+    rows = _fetch_data_schedule_project_root_paths()
+    root_paths = [_to_str(item.get('rootPath')) for item in rows]
+    tree_nodes = _build_data_schedule_tree_nodes(root_paths)
+
+    return {
+        'catalogs': [
+            {
+                'description': '固定数据目录',
+                'id': DATA_SCHEDULE_SELECT_DATA_CATALOG_ID,
+                'name': DATA_SCHEDULE_SELECT_DATA_ROOT,
+            }
+        ],
+        'projectTreeByCatalogId': {
+            DATA_SCHEDULE_SELECT_DATA_CATALOG_ID: tree_nodes,
+        },
+    }
+
+
+def _table_exists(table_name):
+    return bool(_get_table_columns(table_name))
+
+
+def _get_table_column_meta(table_name):
+    cached = _TABLE_COLUMN_META_CACHE.get(table_name)
+    if cached is not None:
+        return cached
+
+    if not _table_exists(table_name):
+        _TABLE_COLUMN_META_CACHE[table_name] = []
+        return []
+
+    rows = []
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT COLUMN_NAME AS columnName, "
+                "COALESCE(COLUMN_COMMENT, '') AS columnComment, "
+                "ORDINAL_POSITION AS ordinalPosition "
+                "FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s "
+                "ORDER BY ORDINAL_POSITION ASC",
+                [table_name]
+            )
+            rows = _dictfetchall(cursor)
+    except Exception as exc:
+        logger.warning('query table column meta failed, table=%s, error=%s', table_name, exc)
+
+    if rows:
+        normalized = []
+        for row in rows:
+            column_name = _to_str(row.get('columnName'))
+            if not column_name:
+                continue
+            normalized.append({
+                'comment': _to_str(row.get('columnComment')),
+                'name': column_name,
+                'normalizedName': column_name.lower(),
+                'ordinalPosition': _to_int(row.get('ordinalPosition'), default=0),
+            })
+        _TABLE_COLUMN_META_CACHE[table_name] = normalized
+        return normalized
+
+    fallback_meta = []
+    for index, column_name in enumerate(sorted(_get_table_columns(table_name)), start=1):
+        fallback_meta.append({
+            'comment': '',
+            'name': column_name,
+            'normalizedName': column_name.lower(),
+            'ordinalPosition': index,
+        })
+    _TABLE_COLUMN_META_CACHE[table_name] = fallback_meta
+    return fallback_meta
+
+
+def _is_blank_text_value(value):
+    if value is None:
+        return True
+    text = str(value).strip()
+    return text in {'', '--'}
+
+
+def _format_data_schedule_field_value(value):
+    if value is None:
+        return '--'
+    if isinstance(value, bool):
+        return '是' if value else '否'
+    if isinstance(value, datetime):
+        return value.strftime(DATA_SCHEDULE_LOG_TIME_FORMAT)
+    text = str(value).strip()
+    return text if text else '--'
+
+
+def _build_data_schedule_field_name(column_meta):
+    comment = _to_str((column_meta or {}).get('comment'))
+    if comment:
+        return comment
+    return _to_str((column_meta or {}).get('name'))
+
+
+def _resolve_data_schedule_project_id_from_task_id(task_id):
+    task_key = _to_str(task_id)
+    if not task_key:
+        return ''
+
+    normalized = task_key.upper()
+    if normalized.startswith('PROJECT:'):
+        return task_key.split(':', 1)[1].strip()
+
+    sql = (
+        "SELECT project_id AS projectId "
+        "FROM c_r_cm_task_item_queue "
+        "WHERE resource_id = %s "
+        "ORDER BY COALESCE(locked_at, updated_at) DESC, updated_at DESC "
+        "LIMIT 1"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql, [task_key])
+        rows = _dictfetchall(cursor)
+
+    if rows:
+        project_id = _to_str(rows[0].get('projectId'))
+        if project_id:
+            return project_id
+
+    return task_key
+
+
+def _fetch_data_schedule_project_base_row(project_id):
+    normalized_project_id = _to_str(project_id)
+    if not normalized_project_id:
+        return None
+
+    valid_project_where_clause = _build_valid_project_where_clause('p')
+    sql = (
+        "SELECT p.project_id AS projectId, "
+        "p.project_name AS projectName, "
+        "p.industry AS industry "
+        "FROM c_r_cm_project p "
+        f"WHERE {valid_project_where_clause} AND p.project_id = %s "
+        "LIMIT 1"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql, [normalized_project_id])
+        rows = _dictfetchall(cursor)
+
+    if not rows:
+        return None
+    return rows[0]
+
+
+def _find_data_schedule_task_row(task_id):
+    normalized_task_id = _to_str(task_id)
+    if not normalized_task_id:
+        return None
+
+    rows = _build_data_schedule_task_rows()
+    for row in rows:
+        if _to_str(row.get('taskId')) == normalized_task_id:
+            return row
+
+    resolved_project_id = _resolve_data_schedule_project_id_from_task_id(normalized_task_id)
+    for row in rows:
+        project_id = _to_str(row.get('projectId'))
+        if project_id and project_id == resolved_project_id:
+            return row
+        if project_id and normalized_task_id.upper() == f'PROJECT:{project_id}'.upper():
+            return row
+    return None
+
+
+def _fetch_data_schedule_table_records(table_name, where_parts=None, params=None):
+    if not _table_exists(table_name):
+        return []
+
+    column_meta = _get_table_column_meta(table_name)
+    column_names = [item.get('name') for item in column_meta if _to_str(item.get('name'))]
+    if not column_names:
+        return []
+
+    where_sql = ''
+    if where_parts:
+        where_sql = ' WHERE ' + ' AND '.join(where_parts)
+
+    select_sql = ', '.join([f"`{name}`" for name in column_names])
+    sql = f"SELECT {select_sql} FROM `{table_name}`{where_sql}"
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params or [])
+        rows = _dictfetchall(cursor)
+    return rows
+
+
+def _normalize_data_schedule_detail_rows(table_name, rows):
+    column_meta = _get_table_column_meta(table_name)
+    available_columns = {item.get('normalizedName') for item in column_meta}
+    included_meta = [
+        item
+        for item in column_meta
+        if item.get('normalizedName') not in DATA_SCHEDULE_DETAIL_EXCLUDED_COLUMN_SET
+    ]
+
+    field_rows = []
+    agent_ids = set()
+    section_ids = set()
+    for row_index, row in enumerate(rows):
+        row_data = row or {}
+        agent_id_value = row_data.get('agent_id') if 'agent_id' in available_columns else None
+        if not _is_blank_text_value(agent_id_value):
+            agent_ids.add(_to_str(agent_id_value))
+
+        section_id_value = row_data.get('prj_section_id') if 'prj_section_id' in available_columns else None
+        if not _is_blank_text_value(section_id_value):
+            section_ids.add(_to_str(section_id_value))
+
+        for meta in included_meta:
+            column_name = _to_str(meta.get('name'))
+            normalized_name = _to_str(meta.get('normalizedName')).lower()
+            raw_value = row_data.get(column_name)
+            field_name = _build_data_schedule_field_name(meta)
+
+            if normalized_name == 'agent_id' or field_name in {'招标代理机构ID', '招标代理机构Id', '招标代理机构id'}:
+                continue
+
+            value_display = _format_data_schedule_field_value(raw_value)
+            status_value = DATA_SCHEDULE_SCOPE_MISSING if _is_blank_text_value(value_display) else DATA_SCHEDULE_SCOPE_COMPLETE
+            field_rows.append({
+                'canDrilldown': False,
+                'canEdit': False,
+                'fieldKey': f'{table_name}.{column_name}.{row_index}',
+                'fieldName': field_name or column_name,
+                'fieldValueDisplay': value_display,
+                'status': status_value,
+            })
+
+    return field_rows, agent_ids, section_ids
 
 
 def _to_int(value, default=0):
@@ -259,10 +753,11 @@ def _parse_datetime_value(value):
 
 
 def _fetch_project_name_rows():
+    valid_project_where_clause = _build_valid_project_where_clause()
     sql = (
         "SELECT project_id AS projectId, project_name AS projectName "
         "FROM c_r_cm_project "
-        "WHERE project_id IS NOT NULL AND project_id != ''"
+        f"WHERE {valid_project_where_clause}"
     )
     with connection.cursor() as cursor:
         cursor.execute(sql)
@@ -270,30 +765,32 @@ def _fetch_project_name_rows():
 
 
 def _fetch_project_file_snapshot_rows():
+    valid_project_where_clause = _build_valid_project_where_clause('p')
     sql = (
-        "SELECT project_id AS projectId, "
+        "SELECT f.project_id AS projectId, "
         "COUNT(*) AS totalFiles, "
-        "SUM(CASE WHEN status <> 'DRAFT' THEN 1 ELSE 0 END) AS nonDraftFiles, "
-        "SUM(CASE WHEN status = 'DRAFT' THEN 1 ELSE 0 END) AS draftFiles, "
-        "SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) AS pendingFiles, "
-        "SUM(CASE WHEN status = 'RUNNING' THEN 1 ELSE 0 END) AS runningFiles, "
-        "SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) AS successFiles, "
-        "SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failedFiles, "
-        "SUM(CASE WHEN status = 'PARTIAL_FAILED' THEN 1 ELSE 0 END) AS partialFailedFiles, "
-        "SUM(CASE WHEN status = 'SUCCESS' AND current_step = 3 THEN 1 ELSE 0 END) AS step3SuccessFiles, "
-        "MAX(COALESCE(current_step, 0)) AS maxCurrentStep, "
-        "MAX(CASE WHEN status = 'RUNNING' THEN COALESCE(current_step, 0) ELSE 0 END) AS runningStepNo, "
+        "SUM(CASE WHEN f.status <> 'DRAFT' THEN 1 ELSE 0 END) AS nonDraftFiles, "
+        "SUM(CASE WHEN f.status = 'DRAFT' THEN 1 ELSE 0 END) AS draftFiles, "
+        "SUM(CASE WHEN f.status = 'PENDING' THEN 1 ELSE 0 END) AS pendingFiles, "
+        "SUM(CASE WHEN f.status = 'RUNNING' THEN 1 ELSE 0 END) AS runningFiles, "
+        "SUM(CASE WHEN f.status = 'SUCCESS' THEN 1 ELSE 0 END) AS successFiles, "
+        "SUM(CASE WHEN f.status = 'FAILED' THEN 1 ELSE 0 END) AS failedFiles, "
+        "SUM(CASE WHEN f.status = 'PARTIAL_FAILED' THEN 1 ELSE 0 END) AS partialFailedFiles, "
+        "SUM(CASE WHEN f.status = 'SUCCESS' AND f.current_step = 3 THEN 1 ELSE 0 END) AS step3SuccessFiles, "
+        "MAX(COALESCE(f.current_step, 0)) AS maxCurrentStep, "
+        "MAX(CASE WHEN f.status = 'RUNNING' THEN COALESCE(f.current_step, 0) ELSE 0 END) AS runningStepNo, "
         "SUBSTRING_INDEX( "
         "  GROUP_CONCAT( "
-        "    CASE WHEN last_error IS NOT NULL AND last_error != '' THEN last_error ELSE NULL END "
-        "    ORDER BY updated_at DESC SEPARATOR '\n' "
+        "    CASE WHEN f.last_error IS NOT NULL AND f.last_error != '' THEN f.last_error ELSE NULL END "
+        "    ORDER BY f.updated_at DESC SEPARATOR '\n' "
         "  ), "
         "  '\n', "
         "  1 "
         ") AS latestFileError "
-        "FROM c_r_cm_file_prepare "
-        "WHERE project_id IS NOT NULL AND project_id != '' "
-        "GROUP BY project_id"
+        "FROM c_r_cm_file_prepare f "
+        "JOIN c_r_cm_project p ON p.project_id = f.project_id "
+        f"WHERE {valid_project_where_clause} "
+        "GROUP BY f.project_id"
     )
     with connection.cursor() as cursor:
         cursor.execute(sql)
@@ -301,13 +798,25 @@ def _fetch_project_file_snapshot_rows():
 
 
 def _fetch_latest_project_task_rows():
+    creator_column = _pick_existing_column('c_r_cm_task_item_queue', DATA_SCHEDULE_TASK_CREATOR_COLUMN_CANDIDATES)
+    create_time_column = _pick_existing_column('c_r_cm_task_item_queue', DATA_SCHEDULE_TASK_CREATE_TIME_COLUMN_CANDIDATES)
+
+    select_parts = [
+        "t.project_id AS projectId",
+        "t.resource_id AS taskId",
+        "t.step_no AS stepNo",
+        "t.status AS status",
+        "t.last_error AS lastError",
+        "t.updated_at AS updatedAt",
+        f"t.{creator_column} AS creator" if creator_column else "NULL AS creator",
+        f"t.{create_time_column} AS createdAt" if create_time_column else "NULL AS createdAt",
+    ]
+    valid_project_where_clause = _build_valid_project_where_clause('p')
     sql = (
-        "SELECT t.project_id AS projectId, "
-        "t.step_no AS stepNo, "
-        "t.status AS status, "
-        "t.last_error AS lastError, "
-        "t.updated_at AS updatedAt "
-        "FROM c_r_cm_task_item_queue t "
+        "SELECT "
+        + ", ".join(select_parts)
+        + " FROM c_r_cm_task_item_queue t "
+        "JOIN c_r_cm_project p ON p.project_id = t.project_id "
         "JOIN ( "
         "    SELECT project_id, "
         "           SUBSTRING_INDEX( "
@@ -323,7 +832,7 @@ def _fetch_latest_project_task_rows():
         "    WHERE file_id LIKE 'PROJECT:%' "
         "    GROUP BY project_id "
         ") latest ON latest.latest_resource_id = t.resource_id "
-        "WHERE t.file_id LIKE 'PROJECT:%'"
+        f"WHERE t.file_id LIKE 'PROJECT:%' AND {valid_project_where_clause}"
     )
     with connection.cursor() as cursor:
         cursor.execute(sql)
@@ -370,9 +879,12 @@ def _normalize_file_snapshot(row):
 def _normalize_task_snapshot(row):
     return {
         'projectId': _to_str(row.get('projectId')),
+        'taskId': _to_str(row.get('taskId')),
         'stepNo': _to_int(row.get('stepNo')),
         'status': _to_str(row.get('status')).upper(),
         'lastError': _to_str(row.get('lastError')),
+        'creator': _to_str(row.get('creator')),
+        'createdAt': _format_datetime_text(row.get('createdAt')),
         'updatedAt': _format_datetime_text(row.get('updatedAt')),
     }
 
@@ -490,6 +1002,9 @@ def _build_project_status_rows():
         current_step_no = _resolve_project_current_step(file_snapshot, task_snapshot)
         latest_task_status = _to_str(task_snapshot.get('status')) if task_snapshot else None
         latest_task_step_no = _to_int(task_snapshot.get('stepNo')) if task_snapshot else None
+        latest_task_id = _to_str(task_snapshot.get('taskId')) if task_snapshot else None
+        latest_task_creator = _to_str(task_snapshot.get('creator')) if task_snapshot else None
+        latest_task_created_at = task_snapshot.get('createdAt') if task_snapshot else None
         latest_task_updated_at = task_snapshot.get('updatedAt') if task_snapshot else None
 
         rows.append({
@@ -499,6 +1014,9 @@ def _build_project_status_rows():
             'statusLabel': _project_status_label(status_value),
             'currentStepNo': current_step_no,
             'currentStepName': _project_step_label(current_step_no),
+            'latestTaskId': latest_task_id,
+            'latestTaskCreator': latest_task_creator,
+            'latestTaskCreatedAt': latest_task_created_at,
             'latestTaskStatus': latest_task_status,
             'latestTaskStepNo': latest_task_step_no,
             'latestTaskUpdatedAt': latest_task_updated_at,
@@ -584,6 +1102,306 @@ def _filter_project_status_rows_by_time(rows, start_time, end_time):
             continue
         out.append(row)
     return out
+
+
+def _split_multi_query_items(raw_items):
+    values = []
+    for raw_item in raw_items:
+        text = _to_str(raw_item)
+        if not text:
+            continue
+        parts = [segment.strip() for segment in text.replace('，', ',').split(',')]
+        values.extend([segment for segment in parts if segment])
+
+    deduplicated = []
+    seen = set()
+    for item in values:
+        normalized = item.lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduplicated.append(item)
+    return deduplicated
+
+
+def _get_multi_query_values(request, key):
+    raw_values = []
+    raw_values.extend(request.query_params.getlist(key))
+    raw_values.extend(request.query_params.getlist(f'{key}[]'))
+    indexed_prefix = f'{key}['
+    for param_key in request.query_params.keys():
+        if param_key.startswith(indexed_prefix):
+            raw_values.extend(request.query_params.getlist(param_key))
+
+    if not raw_values:
+        single_value = request.query_params.get(key)
+        if single_value is not None:
+            raw_values.append(single_value)
+
+    return _split_multi_query_items(raw_values)
+
+
+def _parse_optional_percent(raw_value, field_name):
+    text = _to_str(raw_value)
+    if not text:
+        return None, ''
+
+    try:
+        value = int(text)
+    except (TypeError, ValueError):
+        return None, f'{field_name} 参数无效，需为 0-100 的整数'
+
+    if value < 0 or value > 100:
+        return None, f'{field_name} 参数无效，需为 0-100 的整数'
+
+    return value, ''
+
+
+def _normalize_data_schedule_task_status(raw_status):
+    status_value = _to_str(raw_status).lower()
+    if not status_value:
+        return None
+    if status_value in DATA_SCHEDULE_TASK_STATUS_SET:
+        return status_value
+    if status_value in {'complete', 'completed'}:
+        return DATA_SCHEDULE_TASK_STATUS_SUCCESS
+    if status_value in {'remain', 'remaining'}:
+        return DATA_SCHEDULE_TASK_STATUS_PENDING
+    if status_value in {'abnormal', 'partial_failed'}:
+        return DATA_SCHEDULE_TASK_STATUS_FAILED
+    return None
+
+
+def _parse_data_schedule_task_filters(request):
+    current = _parse_positive_int(request.query_params.get('current'), default=1, max_value=100000)
+    size = _parse_positive_int(
+        request.query_params.get('size'),
+        default=DATA_SCHEDULE_TASK_DEFAULT_SIZE,
+        max_value=DATA_SCHEDULE_TASK_MAX_SIZE
+    )
+    project_name = _to_str(request.query_params.get('projectName'))
+
+    task_status_values = []
+    raw_task_status_values = _get_multi_query_values(request, 'taskStatus')
+    for raw_status in raw_task_status_values:
+        normalized_status = _normalize_data_schedule_task_status(raw_status)
+        if normalized_status is None:
+            return None, 'taskStatus 参数无效，仅支持 pending/running/success/failed/paused/stopped'
+        task_status_values.append(normalized_status)
+
+    creator_values = [item for item in _get_multi_query_values(request, 'creator') if item]
+
+    match_range_min, min_err_msg = _parse_optional_percent(request.query_params.get('matchRangeMin'), 'matchRangeMin')
+    if min_err_msg:
+        return None, min_err_msg
+    match_range_max, max_err_msg = _parse_optional_percent(request.query_params.get('matchRangeMax'), 'matchRangeMax')
+    if max_err_msg:
+        return None, max_err_msg
+    if match_range_min is not None and match_range_max is not None and match_range_min > match_range_max:
+        return None, 'matchRangeMin 不能大于 matchRangeMax'
+
+    raw_create_start_time = request.query_params.get('createStartTime') or request.query_params.get('startTime')
+    raw_create_end_time = request.query_params.get('createEndTime') or request.query_params.get('endTime')
+    create_start_time = _parse_datetime_value(raw_create_start_time)
+    create_end_time = _parse_datetime_value(raw_create_end_time)
+
+    if raw_create_start_time and create_start_time is None:
+        return None, 'createStartTime 格式无效'
+    if raw_create_end_time and create_end_time is None:
+        return None, 'createEndTime 格式无效'
+    if raw_create_end_time and create_end_time and len(_to_str(raw_create_end_time)) == 10:
+        create_end_time = create_end_time + timedelta(days=1) - timedelta(seconds=1)
+    if create_start_time and create_end_time and create_start_time > create_end_time:
+        return None, 'createStartTime 不能晚于 createEndTime'
+
+    return {
+        'creatorValues': creator_values,
+        'createEndTime': create_end_time,
+        'createStartTime': create_start_time,
+        'current': current,
+        'matchRangeMax': match_range_max,
+        'matchRangeMin': match_range_min,
+        'projectName': project_name,
+        'size': size,
+        'taskStatusValues': task_status_values,
+    }, ''
+
+
+def _fetch_project_schedule_meta_rows():
+    valid_project_where_clause = _build_valid_project_where_clause()
+    creator_column = _pick_existing_column('c_r_cm_project', DATA_SCHEDULE_PROJECT_CREATOR_COLUMN_CANDIDATES)
+    create_time_column = _pick_existing_column('c_r_cm_project', DATA_SCHEDULE_PROJECT_CREATE_TIME_COLUMN_CANDIDATES)
+    select_parts = [
+        "project_id AS projectId",
+        f"{creator_column} AS creator" if creator_column else "NULL AS creator",
+        f"{create_time_column} AS createTime" if create_time_column else "NULL AS createTime",
+    ]
+    sql = (
+        "SELECT "
+        + ", ".join(select_parts)
+        + " FROM c_r_cm_project "
+        f"WHERE {valid_project_where_clause}"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
+        return _dictfetchall(cursor)
+
+
+def _map_project_row_to_schedule_task_status(project_row):
+    latest_task_status = _to_str(project_row.get('latestTaskStatus')).upper()
+    if latest_task_status == 'PAUSED':
+        return DATA_SCHEDULE_TASK_STATUS_PAUSED
+    if latest_task_status in {'CANCELLED', 'STOPPED'}:
+        return DATA_SCHEDULE_TASK_STATUS_STOPPED
+
+    normalized_status = _to_str(project_row.get('status')).upper()
+    if normalized_status == 'RUNNING':
+        return DATA_SCHEDULE_TASK_STATUS_RUNNING
+    if normalized_status == 'SUCCESS':
+        return DATA_SCHEDULE_TASK_STATUS_SUCCESS
+    if normalized_status in {'FAILED', 'PARTIAL_FAILED'}:
+        return DATA_SCHEDULE_TASK_STATUS_FAILED
+    return DATA_SCHEDULE_TASK_STATUS_PENDING
+
+
+def _build_data_schedule_progress(file_stats):
+    non_draft_files = _to_int((file_stats or {}).get('nonDraftFiles'))
+    if non_draft_files <= 0:
+        return 0
+    step3_success_files = _to_int((file_stats or {}).get('step3SuccessFiles'))
+    progress = round(step3_success_files * 100 / non_draft_files)
+    return max(0, min(100, int(progress)))
+
+
+def _build_data_schedule_task_rows():
+    project_rows = _build_project_status_rows()
+    project_meta_rows = _fetch_project_schedule_meta_rows()
+    project_meta_map = {}
+    for row in project_meta_rows:
+        project_id = _to_str(row.get('projectId'))
+        if not project_id:
+            continue
+        project_meta_map[project_id] = {
+            'creator': _to_str(row.get('creator')),
+            'createTime': _format_datetime_text(row.get('createTime'))
+        }
+
+    records = []
+    for project_row in project_rows:
+        project_id = _to_str(project_row.get('projectId'))
+        project_name = _to_str(project_row.get('projectName'))
+        task_id = _to_str(project_row.get('latestTaskId')) or f'PROJECT:{project_id}'
+        task_status = _map_project_row_to_schedule_task_status(project_row)
+        progress = _build_data_schedule_progress(project_row.get('fileStats'))
+
+        project_meta = project_meta_map.get(project_id, {})
+        creator = (
+            _to_str(project_row.get('latestTaskCreator'))
+            or _to_str(project_meta.get('creator'))
+            or 'system'
+        )
+        create_time = (
+            _to_str(project_row.get('latestTaskCreatedAt'))
+            or _to_str(project_meta.get('createTime'))
+            or _to_str(project_row.get('latestTaskUpdatedAt'))
+        )
+        complete_time = ''
+        if task_status in {
+            DATA_SCHEDULE_TASK_STATUS_SUCCESS,
+            DATA_SCHEDULE_TASK_STATUS_FAILED,
+            DATA_SCHEDULE_TASK_STATUS_PAUSED,
+            DATA_SCHEDULE_TASK_STATUS_STOPPED,
+        }:
+            complete_time = _to_str(project_row.get('latestTaskUpdatedAt'))
+
+        update_time = _to_str(project_row.get('latestTaskUpdatedAt')) or create_time
+
+        records.append({
+            'completeTime': complete_time,
+            'createBy': creator,
+            'createTime': create_time,
+            'creator': creator,
+            'projectId': project_id,
+            'projectName': project_name or project_id,
+            'progress': progress,
+            'status': None,
+            'taskId': task_id,
+            'taskStatus': task_status,
+            'updateBy': creator,
+            'updateTime': update_time,
+        })
+
+    records.sort(
+        key=lambda item: (
+            _parse_datetime_value(item.get('createTime')) or datetime.min,
+            _to_str(item.get('taskId')),
+            _to_str(item.get('projectId'))
+        ),
+        reverse=True
+    )
+
+    for index, item in enumerate(records, start=1):
+        item['id'] = index
+
+    return records
+
+
+def _filter_data_schedule_task_rows(rows, filters):
+    project_name_keyword = _to_str((filters or {}).get('projectName')).lower()
+    task_status_values = set((filters or {}).get('taskStatusValues') or [])
+    creator_values = [item.lower() for item in ((filters or {}).get('creatorValues') or []) if item]
+    creator_set = set(creator_values)
+    match_range_min = (filters or {}).get('matchRangeMin')
+    match_range_max = (filters or {}).get('matchRangeMax')
+    create_start_time = (filters or {}).get('createStartTime')
+    create_end_time = (filters or {}).get('createEndTime')
+
+    filtered = []
+    for row in rows:
+        project_name = _to_str(row.get('projectName'))
+        if project_name_keyword and project_name_keyword not in project_name.lower():
+            continue
+
+        task_status = _to_str(row.get('taskStatus')).lower()
+        if task_status_values and task_status not in task_status_values:
+            continue
+
+        creator = _to_str(row.get('creator'))
+        if creator_set and creator.lower() not in creator_set:
+            continue
+
+        progress = _to_int(row.get('progress'))
+        if match_range_min is not None and progress < match_range_min:
+            continue
+        if match_range_max is not None and progress > match_range_max:
+            continue
+
+        create_time = _parse_datetime_value(row.get('createTime'))
+        if create_start_time and (create_time is None or create_time < create_start_time):
+            continue
+        if create_end_time and (create_time is None or create_time > create_end_time):
+            continue
+
+        filtered.append(row)
+
+    return filtered
+
+
+def _build_data_schedule_creator_options(keyword=''):
+    query_set = User.objects.filter(is_active=True)
+    normalized_keyword = _to_str(keyword)
+    if normalized_keyword:
+        query_set = query_set.filter(username__icontains=normalized_keyword)
+
+    users = query_set.order_by('username').values('username')
+    options = []
+    for user in users:
+        username = _to_str(user.get('username'))
+        if not username:
+            continue
+        options.append({'label': username, 'value': username})
+
+    return options
 
 
 def _to_excel_cell_value(value):
@@ -989,14 +1807,322 @@ DATA_SCHEDULE_DRILLDOWN_MOCK = {
 }
 
 
+def _get_data_schedule_industry_table_config(industry):
+    normalized = _normalize_data_schedule_detail_industry(industry)
+    if normalized == DATA_SCHEDULE_DETAIL_SW:
+        return {
+            'bidSubmissionFieldName': '中标候选人公示',
+            'bidSubmissionFieldKey': 'winning_candidate_notice',
+            'bidSubmissionTable': DATA_SCHEDULE_SW_BID_SUBMISSION_TABLE,
+            'detailProjectTable': DATA_SCHEDULE_SW_PROJECT_INFO_TABLE,
+            'detailSectionTable': DATA_SCHEDULE_SW_SECTION_TABLE,
+            'expertFieldName': '评标专家信息',
+            'expertFieldKey': 'expert_info',
+            'expertTable': DATA_SCHEDULE_SW_EXPERT_TABLE,
+            'openingAttendeeFieldName': '',
+            'openingAttendeeFieldKey': '',
+            'openingAttendeeTable': '',
+            'tenderAgentTable': DATA_SCHEDULE_SW_TENDER_AGENT_TABLE,
+        }
+    if normalized == DATA_SCHEDULE_DETAIL_JS:
+        return {
+            'bidSubmissionFieldName': '',
+            'bidSubmissionFieldKey': '',
+            'bidSubmissionTable': '',
+            'detailProjectTable': DATA_SCHEDULE_JS_PROJECT_INFO_TABLE,
+            'detailSectionTable': DATA_SCHEDULE_JS_SECTION_TABLE,
+            'expertFieldName': '评标专家信息',
+            'expertFieldKey': 'expert_info',
+            'expertTable': DATA_SCHEDULE_JS_EXPERT_TABLE,
+            'openingAttendeeFieldName': '开标人员信息',
+            'openingAttendeeFieldKey': 'opening_attendee_info',
+            'openingAttendeeTable': DATA_SCHEDULE_JS_OPENING_ATTENDEE_TABLE,
+            'tenderAgentTable': DATA_SCHEDULE_JS_BID_SUBMISSION_TABLE,
+        }
+    return None
+
+
+def _build_data_schedule_detail_context(task_id):
+    task_row = _find_data_schedule_task_row(task_id)
+    if not task_row:
+        raise ValueError('任务不存在')
+
+    project_id = _to_str(task_row.get('projectId')) or _resolve_data_schedule_project_id_from_task_id(task_id)
+    project_row = _fetch_data_schedule_project_base_row(project_id)
+    if not project_row:
+        raise ValueError('项目不存在或无有效行业信息')
+
+    industry = _normalize_data_schedule_detail_industry(project_row.get('industry'))
+    if not industry:
+        raise RuntimeError('项目行业为空，无法加载详情')
+
+    config = _get_data_schedule_industry_table_config(industry)
+    if config is None:
+        raise RuntimeError(f'暂不支持行业 {industry} 的详情查询')
+
+    return {
+        'agentIds': set(),
+        'config': config,
+        'industry': industry,
+        'projectId': _to_str(project_row.get('projectId')),
+        'projectName': _to_str(project_row.get('projectName')),
+        'sectionIds': set(),
+        'taskId': _to_str(task_row.get('taskId')) or _to_str(task_id),
+        'taskRow': task_row,
+    }
+
+
+def _build_data_schedule_where_with_values(column_name, values):
+    normalized_values = [_to_str(item) for item in values if _to_str(item)]
+    if not normalized_values:
+        return None, []
+
+    placeholders = ', '.join(['%s'] * len(normalized_values))
+    return f"`{column_name}` IN ({placeholders})", normalized_values
+
+
+def _build_data_schedule_detail_table_rows(table_name, project_id):
+    if not _table_exists(table_name):
+        return []
+
+    where_parts = []
+    params = []
+    if _table_has_column(table_name, 'project_id'):
+        where_parts.append('`project_id` = %s')
+        params.append(project_id)
+    return _fetch_data_schedule_table_records(table_name, where_parts, params)
+
+
+def _dedupe_data_schedule_field_rows(rows):
+    deduped = []
+    seen = set()
+    for row in rows:
+        if row.get('canDrilldown'):
+            signature = ('drilldown', _to_str(row.get('fieldKey')))
+        else:
+            signature = (
+                'field',
+                _to_str(row.get('fieldName')),
+                _to_str(row.get('fieldValueDisplay')),
+            )
+        if signature in seen:
+            continue
+        seen.add(signature)
+        deduped.append(row)
+    return deduped
+
+
+def _append_data_schedule_drilldown_field(rows, field_key, field_name, status_value=DATA_SCHEDULE_SCOPE_COMPLETE):
+    if not field_key or not field_name:
+        return
+    rows.append({
+        'canDrilldown': True,
+        'canEdit': False,
+        'fieldKey': field_key,
+        'fieldName': field_name,
+        'fieldValueDisplay': '查看',
+        'status': status_value,
+    })
+
+
+def _build_data_schedule_field_rows(context):
+    project_id = _to_str((context or {}).get('projectId'))
+    config = (context or {}).get('config') or {}
+    if not project_id or not config:
+        return []
+
+    field_rows = []
+    agent_ids = set()
+    section_ids = set()
+    for table_name in [
+        _to_str(config.get('detailProjectTable')),
+        _to_str(config.get('detailSectionTable')),
+    ]:
+        if not table_name:
+            continue
+        table_rows = _build_data_schedule_detail_table_rows(table_name, project_id)
+        normalized_rows, extracted_agent_ids, extracted_section_ids = _normalize_data_schedule_detail_rows(table_name, table_rows)
+        field_rows.extend(normalized_rows)
+        agent_ids.update(extracted_agent_ids)
+        section_ids.update(extracted_section_ids)
+
+    context['agentIds'] = agent_ids
+    context['sectionIds'] = section_ids
+
+    tender_agent_status = DATA_SCHEDULE_SCOPE_COMPLETE if agent_ids else DATA_SCHEDULE_SCOPE_MISSING
+    _append_data_schedule_drilldown_field(field_rows, 'tender_agent_info', '招标代理机构', tender_agent_status)
+    _append_data_schedule_drilldown_field(
+        field_rows,
+        _to_str(config.get('expertFieldKey')),
+        _to_str(config.get('expertFieldName')),
+    )
+    _append_data_schedule_drilldown_field(
+        field_rows,
+        _to_str(config.get('bidSubmissionFieldKey')),
+        _to_str(config.get('bidSubmissionFieldName')),
+    )
+    _append_data_schedule_drilldown_field(
+        field_rows,
+        _to_str(config.get('openingAttendeeFieldKey')),
+        _to_str(config.get('openingAttendeeFieldName')),
+    )
+
+    return _dedupe_data_schedule_field_rows(field_rows)
+
+
+def _extract_data_schedule_bid_no(fields):
+    for field in fields:
+        field_name = _to_str(field.get('fieldName'))
+        if '招标编号' not in field_name:
+            continue
+        field_value = _to_str(field.get('fieldValueDisplay'))
+        if not _is_blank_text_value(field_value):
+            return field_value
+    return ''
+
+
+def _build_data_schedule_detail_bundle(task_id):
+    context = _build_data_schedule_detail_context(task_id)
+    fields = _build_data_schedule_field_rows(context)
+    counts = _build_data_schedule_counts(fields)
+    task_row = context.get('taskRow') or {}
+
+    summary = {
+        'bidNo': _extract_data_schedule_bid_no(fields),
+        'counts': counts,
+        'createTime': _to_str(task_row.get('createTime')),
+        'creator': _to_str(task_row.get('creator')),
+        'progress': _to_int(task_row.get('progress')),
+        'projectName': _to_str(task_row.get('projectName')) or _to_str(context.get('projectName')),
+        'status': _to_str(task_row.get('taskStatus')) or DATA_SCHEDULE_TASK_STATUS_PENDING,
+        'taskId': _to_str(task_row.get('taskId')) or _to_str(task_id),
+    }
+
+    detail = {
+        **summary,
+        'industry': _to_str(context.get('industry')),
+        'projectId': _to_str(context.get('projectId')),
+    }
+
+    return {
+        'context': context,
+        'detail': detail,
+        'fields': fields,
+        'summary': summary,
+    }
+
+
+def _build_data_schedule_drilldown_from_table(table_name, title, context, prefer_agent=False):
+    if not _table_exists(table_name):
+        return {
+            'actions': {'canCreate': False, 'canDelete': False, 'canEdit': False},
+            'columns': [],
+            'records': [],
+            'title': title,
+        }
+
+    where_parts = []
+    params = []
+    project_id = _to_str((context or {}).get('projectId'))
+    section_ids = sorted([(item) for item in ((context or {}).get('sectionIds') or set()) if _to_str(item)])
+    agent_ids = sorted([(item) for item in ((context or {}).get('agentIds') or set()) if _to_str(item)])
+
+    if prefer_agent and _table_has_column(table_name, 'agent_id'):
+        in_clause, in_params = _build_data_schedule_where_with_values('agent_id', agent_ids)
+        if in_clause is None:
+            return {
+                'actions': {'canCreate': False, 'canDelete': False, 'canEdit': False},
+                'columns': [],
+                'records': [],
+                'title': title,
+            }
+        where_parts.append(in_clause)
+        params.extend(in_params)
+
+    if _table_has_column(table_name, 'project_id') and project_id:
+        where_parts.append('`project_id` = %s')
+        params.append(project_id)
+
+    if _table_has_column(table_name, 'prj_section_id') and section_ids:
+        section_clause, section_params = _build_data_schedule_where_with_values('prj_section_id', section_ids)
+        if section_clause:
+            where_parts.append(section_clause)
+            params.extend(section_params)
+
+    rows = _fetch_data_schedule_table_records(table_name, where_parts, params)
+    column_meta = [
+        item
+        for item in _get_table_column_meta(table_name)
+        if item.get('normalizedName') not in DATA_SCHEDULE_DETAIL_EXCLUDED_COLUMN_SET
+    ]
+    columns = [
+        {
+            'editable': False,
+            'key': _to_str(item.get('name')),
+            'title': _build_data_schedule_field_name(item),
+        }
+        for item in column_meta
+        if _to_str(item.get('name'))
+    ]
+
+    records = []
+    for index, row in enumerate(rows, start=1):
+        normalized = {'id': index}
+        for column in columns:
+            column_key = _to_str(column.get('key'))
+            normalized[column_key] = _format_data_schedule_field_value((row or {}).get(column_key))
+        records.append(normalized)
+
+    return {
+        'actions': {'canCreate': False, 'canDelete': False, 'canEdit': False},
+        'columns': columns,
+        'records': records,
+        'title': title,
+    }
+
+
+def _get_data_schedule_drilldown_payload(task_id, field_key):
+    bundle = _build_data_schedule_detail_bundle(task_id)
+    field_item = _get_data_schedule_field_item(task_id, field_key, bundle=bundle)
+    if not field_item:
+        return None, None, '字段不存在', status.HTTP_404_NOT_FOUND, ERROR_CODE_NOT_FOUND
+    if not field_item.get('canDrilldown'):
+        return None, None, '当前字段不支持下钻', status.HTTP_400_BAD_REQUEST, ERROR_CODE_INVALID_PARAMS
+
+    context = bundle.get('context') or {}
+    config = context.get('config') or {}
+    normalized_field_key = _to_str(field_item.get('fieldKey'))
+
+    table_name = ''
+    title = f"字段详情 - {field_item.get('fieldName') or normalized_field_key}"
+    prefer_agent = False
+    if normalized_field_key == 'tender_agent_info':
+        table_name = _to_str(config.get('tenderAgentTable'))
+        prefer_agent = True
+    elif normalized_field_key == _to_str(config.get('expertFieldKey')):
+        table_name = _to_str(config.get('expertTable'))
+    elif normalized_field_key == _to_str(config.get('bidSubmissionFieldKey')):
+        table_name = _to_str(config.get('bidSubmissionTable'))
+    elif normalized_field_key == _to_str(config.get('openingAttendeeFieldKey')):
+        table_name = _to_str(config.get('openingAttendeeTable'))
+
+    if not table_name:
+        return None, None, '下钻数据不存在', status.HTTP_404_NOT_FOUND, ERROR_CODE_NOT_FOUND
+
+    payload = _build_data_schedule_drilldown_from_table(table_name, title, context, prefer_agent=prefer_agent)
+    return field_item, payload, '', status.HTTP_200_OK, SUCCESS_CODE
+
+
 def _get_data_schedule_summary(task_id):
-    _ = task_id
-    _raise_data_schedule_real_source_error()
+    return _build_data_schedule_detail_bundle(task_id).get('summary') or {}
+
+
+def _get_data_schedule_detail(task_id):
+    return _build_data_schedule_detail_bundle(task_id).get('detail') or {}
 
 
 def _get_data_schedule_fields(task_id):
-    _ = task_id
-    _raise_data_schedule_real_source_error()
+    return _build_data_schedule_detail_bundle(task_id).get('fields') or []
 
 
 def _update_data_schedule_field_value(task_id, field_key, field_value):
@@ -1004,27 +2130,17 @@ def _update_data_schedule_field_value(task_id, field_key, field_value):
     task_overrides[field_key] = field_value
 
 
-def _get_data_schedule_field_item(task_id, field_key):
+def _get_data_schedule_field_item(task_id, field_key, bundle=None):
     normalized_field_key = str(field_key or '').strip()
     if not normalized_field_key:
         return None
 
-    all_fields = _get_data_schedule_fields(task_id)
+    if bundle and isinstance(bundle, dict):
+        all_fields = bundle.get('fields') or []
+    else:
+        all_fields = _get_data_schedule_fields(task_id)
     field_map = {item.get('fieldKey'): item for item in all_fields}
     return field_map.get(normalized_field_key)
-
-
-def _get_data_schedule_drilldown_payload(task_id, field_key):
-    field_item = _get_data_schedule_field_item(task_id, field_key)
-    if not field_item:
-        return None, None, '字段不存在', status.HTTP_404_NOT_FOUND, ERROR_CODE_NOT_FOUND
-    if not field_item.get('canDrilldown'):
-        return None, None, '当前字段不支持下钻', status.HTTP_400_BAD_REQUEST, ERROR_CODE_INVALID_PARAMS
-
-    payload = DATA_SCHEDULE_DRILLDOWN_MOCK.get(field_item.get('fieldKey'))
-    if not payload:
-        return None, None, '下钻数据不存在', status.HTTP_404_NOT_FOUND, ERROR_CODE_NOT_FOUND
-    return field_item, payload, '', status.HTTP_200_OK, SUCCESS_CODE
 
 
 def _normalize_drilldown_row_data(row_data, columns):
@@ -1567,17 +2683,17 @@ def _build_data_schedule_export_binary(task_id, scope):
         if not field.get('canDrilldown'):
             continue
         field_key = field.get('fieldKey') or ''
-        if field_key not in DATA_SCHEDULE_DRILLDOWN_MOCK:
+        _, drilldown_payload, err_msg, _, _ = _get_data_schedule_drilldown_payload(task_id, field_key)
+        if err_msg or not drilldown_payload:
             continue
         sheet_name = _safe_excel_sheet_name(f"下钻_{field.get('fieldName') or field_key}", used_sheet_names)
         drilldown_sheet_map[field_key] = sheet_name
         drilldown_sheet = workbook.create_sheet(sheet_name)
-        drilldown_payload = DATA_SCHEDULE_DRILLDOWN_MOCK[field_key]
         columns = drilldown_payload.get('columns') or []
         drilldown_sheet.append([col.get('title') or col.get('key') or '' for col in columns] + ['操作'])
         for row in drilldown_payload.get('records') or []:
             row_values = [_to_excel_cell_value(row.get(col.get('key') or '', '--')) for col in columns]
-            row_values.append('编辑 / 删除')
+            row_values.append('只读')
             drilldown_sheet.append(row_values)
         drilldown_sheet.freeze_panes = 'A2'
         _style_data_schedule_drilldown_sheet(drilldown_sheet)
@@ -1595,7 +2711,7 @@ def _build_data_schedule_export_binary(task_id, scope):
             _to_excel_cell_value(field.get('fieldName') or ''),
             _to_excel_cell_value(field.get('fieldValueDisplay') or '--'),
             _to_excel_cell_value(status_text),
-            '编辑'
+            '查看'
         ])
 
         field_key = field.get('fieldKey') or ''
@@ -2645,16 +3761,133 @@ def get_project_status_ranking(request):
 
 @swagger_auto_schema(
     method='get',
+    operation_description='获取数据调度创建人下拉选项（来源 auth_user）',
+    manual_parameters=[
+        openapi.Parameter('keyword', openapi.IN_QUERY, description='用户名关键字（可选）', type=openapi.TYPE_STRING),
+    ],
+    responses={200: '获取成功', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_data_schedule_creators(request):
+    keyword = _to_str(request.query_params.get('keyword'))
+    options = _build_data_schedule_creator_options(keyword)
+    return success_response(options, '获取成功')
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='获取数据调度选择数据弹窗树结构',
+    responses={200: '获取成功', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_data_schedule_select_data(_request):
+    try:
+        payload = _build_data_schedule_select_data_payload()
+        return success_response(payload, '获取成功')
+    except Exception as exc:
+        logger.exception('get data schedule select data failed: %s', exc)
+        return error_response(
+            '选择数据目录查询失败，请检查数据库连接',
+            ERROR_CODE_INVALID_PARAMS,
+            status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='获取数据调度任务列表',
+    manual_parameters=[
+        openapi.Parameter('current', openapi.IN_QUERY, description='页码，默认1', type=openapi.TYPE_INTEGER),
+        openapi.Parameter('size', openapi.IN_QUERY, description=f'每页条数，默认{DATA_SCHEDULE_TASK_DEFAULT_SIZE}，最大{DATA_SCHEDULE_TASK_MAX_SIZE}', type=openapi.TYPE_INTEGER),
+        openapi.Parameter('projectName', openapi.IN_QUERY, description='项目名称（模糊匹配）', type=openapi.TYPE_STRING),
+        openapi.Parameter('taskStatus', openapi.IN_QUERY, description='任务状态（可重复传参）', type=openapi.TYPE_STRING),
+        openapi.Parameter('creator', openapi.IN_QUERY, description='创建人（可重复传参）', type=openapi.TYPE_STRING),
+        openapi.Parameter('matchRangeMin', openapi.IN_QUERY, description='匹配度下限（0-100）', type=openapi.TYPE_INTEGER),
+        openapi.Parameter('matchRangeMax', openapi.IN_QUERY, description='匹配度上限（0-100）', type=openapi.TYPE_INTEGER),
+        openapi.Parameter('createStartTime', openapi.IN_QUERY, description='创建时间起', type=openapi.TYPE_STRING),
+        openapi.Parameter('createEndTime', openapi.IN_QUERY, description='创建时间止', type=openapi.TYPE_STRING),
+    ],
+    responses={200: '获取成功', 400: '参数错误', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_data_schedule_tasks(request):
+    filters, err_msg = _parse_data_schedule_task_filters(request)
+    if err_msg:
+        return error_response(err_msg, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    try:
+        rows = _build_data_schedule_task_rows()
+    except Exception as exc:
+        logger.exception('get data schedule tasks failed: %s', exc)
+        return error_response(
+            '数据调度任务列表查询失败，请检查数据库连接',
+            ERROR_CODE_INVALID_PARAMS,
+            status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+    filtered_rows = _filter_data_schedule_task_rows(rows, filters)
+    current = filters.get('current') or 1
+    size = filters.get('size') or DATA_SCHEDULE_TASK_DEFAULT_SIZE
+    total = len(filtered_rows)
+    start_idx = (current - 1) * size
+    end_idx = start_idx + size
+    paged_records = filtered_rows[start_idx:end_idx]
+
+    return success_response(
+        {
+            'current': current,
+            'size': size,
+            'total': total,
+            'records': paged_records,
+        },
+        '获取成功'
+    )
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='获取数据调度任务详情',
+    responses={200: '获取成功', 400: '参数错误', 404: '任务不存在', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_data_schedule_task_detail(_request, task_id):
+    try:
+        detail = _get_data_schedule_detail(task_id)
+        return success_response(detail, '获取成功')
+    except ValueError as exc:
+        return error_response(str(exc), ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+    except RuntimeError as exc:
+        return error_response(str(exc), ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+    except Exception as exc:
+        logger.exception('get data schedule task detail failed: %s', exc)
+        return error_response('任务详情查询失败，请检查数据库连接', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@swagger_auto_schema(
+    method='get',
     operation_description='获取数据调度任务提取结果概览',
     responses={200: '获取成功', 401: '未认证'}
 )
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_data_schedule_extract_summary(_request, task_id):
-    all_fields = _get_data_schedule_fields(task_id)
-    summary = _get_data_schedule_summary(task_id)
-    summary['counts'] = _build_data_schedule_counts(all_fields)
-    return success_response(summary, '获取成功')
+    try:
+        bundle = _build_data_schedule_detail_bundle(task_id)
+        all_fields = bundle.get('fields') or []
+        summary = bundle.get('summary') or {}
+        summary['counts'] = _build_data_schedule_counts(all_fields)
+        return success_response(summary, '获取成功')
+    except ValueError as exc:
+        return error_response(str(exc), ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+    except RuntimeError as exc:
+        return error_response(str(exc), ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+    except Exception as exc:
+        logger.exception('get data schedule extract summary failed: %s', exc)
+        return error_response('任务概览查询失败，请检查数据库连接', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @swagger_auto_schema(
@@ -2677,14 +3910,21 @@ def get_data_schedule_extract_fields(request, task_id):
     current = _parse_positive_int(request.query_params.get('current'), default=1, max_value=100000)
     size = _parse_positive_int(request.query_params.get('size'), default=20, max_value=200)
 
-    all_fields = _get_data_schedule_fields(task_id)
-    filtered_fields = _filter_data_schedule_fields_by_scope(all_fields, scope)
-    field_records = [_to_data_schedule_field_record(item) for item in filtered_fields]
-    paginated_data = _paginate_data_schedule_records(field_records, current, size)
-    paginated_data['scope'] = scope
-    paginated_data['counts'] = _build_data_schedule_counts(all_fields)
-
-    return success_response(paginated_data, '获取成功')
+    try:
+        all_fields = (_build_data_schedule_detail_bundle(task_id).get('fields') or [])
+        filtered_fields = _filter_data_schedule_fields_by_scope(all_fields, scope)
+        field_records = [_to_data_schedule_field_record(item) for item in filtered_fields]
+        paginated_data = _paginate_data_schedule_records(field_records, current, size)
+        paginated_data['scope'] = scope
+        paginated_data['counts'] = _build_data_schedule_counts(all_fields)
+        return success_response(paginated_data, '获取成功')
+    except ValueError as exc:
+        return error_response(str(exc), ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+    except RuntimeError as exc:
+        return error_response(str(exc), ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+    except Exception as exc:
+        logger.exception('get data schedule extract fields failed: %s', exc)
+        return error_response('字段列表查询失败，请检查数据库连接', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @swagger_auto_schema(
@@ -2756,38 +3996,38 @@ def get_data_schedule_extract_drilldown(request, task_id):
     current = _parse_positive_int(request.query_params.get('current'), default=1, max_value=100000)
     size = _parse_positive_int(request.query_params.get('size'), default=20, max_value=200)
 
-    all_fields = _get_data_schedule_fields(task_id)
-    field_map = {item.get('fieldKey'): item for item in all_fields}
-    field_item = field_map.get(field_key)
-    if not field_item:
-        return error_response('字段不存在', ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
-    if not field_item.get('canDrilldown'):
-        return error_response('当前字段不支持下钻', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+    try:
+        field_item, payload, err_msg, http_status, err_code = _get_data_schedule_drilldown_payload(task_id, field_key)
+        if err_msg:
+            return error_response(err_msg, err_code, http_status)
 
-    payload = DATA_SCHEDULE_DRILLDOWN_MOCK.get(field_key)
-    if not payload:
-        return error_response('下钻数据不存在', ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+        records = payload.get('records') or []
+        if scope != DATA_SCHEDULE_SCOPE_ALL and field_item.get('status') != scope:
+            records = []
 
-    records = payload.get('records') or []
-    if scope != DATA_SCHEDULE_SCOPE_ALL and field_item.get('status') != scope:
-        records = []
+        paginated_data = _paginate_data_schedule_records(records, current, size)
+        paginated_data.update(
+            {
+                'actions': {
+                    'canCreate': bool((payload.get('actions') or {}).get('canCreate')),
+                    'canDelete': bool((payload.get('actions') or {}).get('canDelete')),
+                    'canEdit': bool((payload.get('actions') or {}).get('canEdit'))
+                },
+                'columns': payload.get('columns') or [],
+                'fieldKey': field_key,
+                'scope': scope,
+                'title': payload.get('title') or f"字段详情 - {field_item.get('fieldName') or field_key}",
+            }
+        )
 
-    paginated_data = _paginate_data_schedule_records(records, current, size)
-    paginated_data.update(
-        {
-            'actions': {
-                'canCreate': True,
-                'canDelete': True,
-                'canEdit': True
-            },
-            'columns': payload.get('columns') or [],
-            'fieldKey': field_key,
-            'scope': scope,
-            'title': payload.get('title') or f"字段详情 - {field_item.get('fieldName') or field_key}",
-        }
-    )
-
-    return success_response(paginated_data, '获取成功')
+        return success_response(paginated_data, '获取成功')
+    except ValueError as exc:
+        return error_response(str(exc), ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+    except RuntimeError as exc:
+        return error_response(str(exc), ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+    except Exception as exc:
+        logger.exception('get data schedule extract drilldown failed: %s', exc)
+        return error_response('字段下钻查询失败，请检查数据库连接', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @swagger_auto_schema(
@@ -2806,27 +4046,37 @@ def get_data_schedule_extract_drilldown(request, task_id):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def create_data_schedule_extract_drilldown_row(request, task_id):
-    field_key = str(request.data.get('fieldKey') or '').strip()
-    field_item, payload, err_msg, http_status, err_code = _get_data_schedule_drilldown_payload(task_id, field_key)
-    if err_msg:
-        return error_response(err_msg, err_code, http_status)
+    try:
+        field_key = str(request.data.get('fieldKey') or '').strip()
+        field_item, payload, err_msg, http_status, err_code = _get_data_schedule_drilldown_payload(task_id, field_key)
+        if err_msg:
+            return error_response(err_msg, err_code, http_status)
+        if not (payload.get('actions') or {}).get('canCreate'):
+            return error_response('当前字段不支持新增', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
 
-    columns = payload.get('columns') or []
-    normalized_row, normalize_err = _normalize_drilldown_row_data(request.data.get('rowData'), columns)
-    if normalize_err:
-        return error_response(normalize_err, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+        columns = payload.get('columns') or []
+        normalized_row, normalize_err = _normalize_drilldown_row_data(request.data.get('rowData'), columns)
+        if normalize_err:
+            return error_response(normalize_err, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
 
-    records = payload.setdefault('records', [])
-    row_id = _get_next_drilldown_row_id(records)
-    created_row = {'id': row_id}
-    created_row.update(normalized_row)
-    records.append(created_row)
+        records = payload.setdefault('records', [])
+        row_id = _get_next_drilldown_row_id(records)
+        created_row = {'id': row_id}
+        created_row.update(normalized_row)
+        records.append(created_row)
 
-    response_data = {
-        'fieldKey': field_item.get('fieldKey') or field_key,
-        'record': created_row
-    }
-    return success_response(response_data, '新增成功')
+        response_data = {
+            'fieldKey': field_item.get('fieldKey') or field_key,
+            'record': created_row
+        }
+        return success_response(response_data, '新增成功')
+    except ValueError as exc:
+        return error_response(str(exc), ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+    except RuntimeError as exc:
+        return error_response(str(exc), ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+    except Exception as exc:
+        logger.exception('create data schedule drilldown row failed: %s', exc)
+        return error_response('新增失败，请检查数据库连接', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @swagger_auto_schema(
@@ -2845,27 +4095,37 @@ def create_data_schedule_extract_drilldown_row(request, task_id):
 @api_view(['PATCH'])
 @permission_classes([IsAuthenticated])
 def update_data_schedule_extract_drilldown_row(request, task_id, row_id):
-    field_key = str(request.data.get('fieldKey') or '').strip()
-    field_item, payload, err_msg, http_status, err_code = _get_data_schedule_drilldown_payload(task_id, field_key)
-    if err_msg:
-        return error_response(err_msg, err_code, http_status)
+    try:
+        field_key = str(request.data.get('fieldKey') or '').strip()
+        field_item, payload, err_msg, http_status, err_code = _get_data_schedule_drilldown_payload(task_id, field_key)
+        if err_msg:
+            return error_response(err_msg, err_code, http_status)
+        if not (payload.get('actions') or {}).get('canEdit'):
+            return error_response('当前字段不支持编辑', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
 
-    records = payload.get('records') or []
-    target_row = _find_drilldown_row(records, row_id)
-    if not target_row:
-        return error_response('下钻行不存在', ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+        records = payload.get('records') or []
+        target_row = _find_drilldown_row(records, row_id)
+        if not target_row:
+            return error_response('下钻行不存在', ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
 
-    columns = payload.get('columns') or []
-    normalized_row, normalize_err = _normalize_drilldown_row_data(request.data.get('rowData'), columns)
-    if normalize_err:
-        return error_response(normalize_err, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+        columns = payload.get('columns') or []
+        normalized_row, normalize_err = _normalize_drilldown_row_data(request.data.get('rowData'), columns)
+        if normalize_err:
+            return error_response(normalize_err, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
 
-    target_row.update(normalized_row)
-    response_data = {
-        'fieldKey': field_item.get('fieldKey') or field_key,
-        'record': target_row
-    }
-    return success_response(response_data, '更新成功')
+        target_row.update(normalized_row)
+        response_data = {
+            'fieldKey': field_item.get('fieldKey') or field_key,
+            'record': target_row
+        }
+        return success_response(response_data, '更新成功')
+    except ValueError as exc:
+        return error_response(str(exc), ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+    except RuntimeError as exc:
+        return error_response(str(exc), ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+    except Exception as exc:
+        logger.exception('update data schedule drilldown row failed: %s', exc)
+        return error_response('更新失败，请检查数据库连接', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @swagger_auto_schema(
@@ -2879,22 +4139,32 @@ def update_data_schedule_extract_drilldown_row(request, task_id, row_id):
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def delete_data_schedule_extract_drilldown_row(request, task_id, row_id):
-    field_key = str(request.query_params.get('fieldKey') or '').strip()
-    field_item, payload, err_msg, http_status, err_code = _get_data_schedule_drilldown_payload(task_id, field_key)
-    if err_msg:
-        return error_response(err_msg, err_code, http_status)
+    try:
+        field_key = str(request.query_params.get('fieldKey') or '').strip()
+        field_item, payload, err_msg, http_status, err_code = _get_data_schedule_drilldown_payload(task_id, field_key)
+        if err_msg:
+            return error_response(err_msg, err_code, http_status)
+        if not (payload.get('actions') or {}).get('canDelete'):
+            return error_response('当前字段不支持删除', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
 
-    records = payload.get('records') or []
-    target_row = _find_drilldown_row(records, row_id)
-    if not target_row:
-        return error_response('下钻行不存在', ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+        records = payload.get('records') or []
+        target_row = _find_drilldown_row(records, row_id)
+        if not target_row:
+            return error_response('下钻行不存在', ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
 
-    payload['records'] = [item for item in records if item is not target_row]
-    response_data = {
-        'fieldKey': field_item.get('fieldKey') or field_key,
-        'rowId': row_id
-    }
-    return success_response(response_data, '删除成功')
+        payload['records'] = [item for item in records if item is not target_row]
+        response_data = {
+            'fieldKey': field_item.get('fieldKey') or field_key,
+            'rowId': row_id
+        }
+        return success_response(response_data, '删除成功')
+    except ValueError as exc:
+        return error_response(str(exc), ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+    except RuntimeError as exc:
+        return error_response(str(exc), ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+    except Exception as exc:
+        logger.exception('delete data schedule drilldown row failed: %s', exc)
+        return error_response('删除失败，请检查数据库连接', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @swagger_auto_schema(

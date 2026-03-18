@@ -21,6 +21,26 @@ urlpatterns = [
         name='get_project_status_ranking'
     ),
     path(
+        'data-schedule/creators/',
+        views.get_data_schedule_creators,
+        name='get_data_schedule_creators'
+    ),
+    path(
+        'data-schedule/select-data/',
+        views.get_data_schedule_select_data,
+        name='get_data_schedule_select_data'
+    ),
+    path(
+        'data-schedule/tasks/',
+        views.get_data_schedule_tasks,
+        name='get_data_schedule_tasks'
+    ),
+    path(
+        'data-schedule/tasks/<str:task_id>/detail/',
+        views.get_data_schedule_task_detail,
+        name='get_data_schedule_task_detail'
+    ),
+    path(
         'data-schedule/tasks/<str:task_id>/extract-result/summary/',
         views.get_data_schedule_extract_summary,
         name='get_data_schedule_extract_summary'

@@ -1,5 +1,7 @@
 import { Button, Col, DatePicker, Flex, Form, Input, InputNumber, Row, Select } from 'antd';
 
+import { useDataScheduleCreatorOptions } from '@/service/hooks';
+
 const statusOptions = [
   { label: 'page.dataSchedule.statusPending', value: 'pending' },
   { label: 'page.dataSchedule.statusRunning', value: 'running' },
@@ -9,17 +11,12 @@ const statusOptions = [
   { label: 'page.dataSchedule.statusStopped', value: 'stopped' }
 ];
 
-const creatorOptions = [
-  { label: '张三', value: 'zhangsan' },
-  { label: '李四', value: 'lisi' },
-  { label: '王五', value: 'wangwu' },
-  { label: '赵六', value: 'zhaoliu' }
-];
-
 const ScheduleSearch: FC<Page.SearchProps> = memo(({ form, reset, search, searchParams }) => {
   const { t } = useTranslation();
+  const creatorOptionsQuery = useDataScheduleCreatorOptions();
   const matchRangeMin = Form.useWatch('matchRangeMin', form);
   const matchRangeMax = Form.useWatch('matchRangeMax', form);
+  const creatorOptions = creatorOptionsQuery.data || [];
 
   return (
     <Form
@@ -120,6 +117,7 @@ const ScheduleSearch: FC<Page.SearchProps> = memo(({ form, reset, search, search
           >
             <Select
               allowClear
+              loading={creatorOptionsQuery.isFetching}
               maxTagCount="responsive"
               mode="multiple"
               options={creatorOptions}

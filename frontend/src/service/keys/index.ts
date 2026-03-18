@@ -33,7 +33,8 @@ export const QUERY_KEYS = {
     EXTRACT_FIELDS: (params: Api.DataSchedule.FieldListParams | null) => ['dataSchedule', 'extractFields', params] as const,
     EXTRACT_SUMMARY: (taskId: string) => ['dataSchedule', 'extractSummary', taskId] as const,
     LOG_META: (taskId: string) => ['dataSchedule', 'logMeta', taskId] as const,
-    LOG_LIST: (params: Api.DataSchedule.TaskLogListParams | null) => ['dataSchedule', 'logList', params] as const
+    LOG_LIST: (params: Api.DataSchedule.TaskLogListParams | null) => ['dataSchedule', 'logList', params] as const,
+    SELECT_DATA: ['dataSchedule', 'selectData'] as const
   },
   // Data Overview
   DATA_OVERVIEW: {

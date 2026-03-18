@@ -18,12 +18,6 @@ export interface ProjectNodeItem {
   type: ProjectNodeType;
 }
 
-/** Real data source is required. Mock data has been intentionally removed. */
-export const dataCatalogs: DataCatalogItem[] = [];
-
-/** Real data source is required. Mock data has been intentionally removed. */
-export const projectTreeByCatalogId: Record<string, ProjectNodeItem[]> = {};
-
 export function flattenProjectNodes(nodes: ProjectNodeItem[]): ProjectNodeItem[] {
   const result: ProjectNodeItem[] = [];
 

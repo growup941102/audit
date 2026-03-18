@@ -1,21 +1,55 @@
 import type { DataNode } from 'antd/es/tree';
 
+import { useDataScheduleSelectData } from '@/service/hooks';
+
 import ScheduleChooseDataModal from './ScheduleChooseDataModal';
 import type { ProjectNodeItem } from './chooseDataMock';
-import { dataCatalogs, flattenProjectNodes, projectTreeByCatalogId } from './chooseDataMock';
+import { flattenProjectNodes } from './chooseDataMock';
 
 interface Props {
   readonly onCancel: () => void;
   readonly onCreate: () => void;
 }
 
+const DEFAULT_CATALOGS: Api.DataSchedule.SelectDataCatalog[] = [
+  {
+    description: '固定数据目录',
+    id: 'home_tj',
+    name: '/home/tj'
+  }
+];
+
 const ScheduleCreateView = ({ onCancel, onCreate }: Props) => {
-  const hasRealCatalogData = dataCatalogs.length > 0;
+  const selectDataQuery = useDataScheduleSelectData();
+  const catalogs = useMemo<Api.DataSchedule.SelectDataCatalog[]>(
+    () => (selectDataQuery.data?.catalogs?.length ? selectDataQuery.data.catalogs : DEFAULT_CATALOGS),
+    [selectDataQuery.data?.catalogs]
+  );
+  const projectTreeByCatalogId = useMemo<Record<string, ProjectNodeItem[]>>(
+    () => (selectDataQuery.data?.projectTreeByCatalogId as Record<string, ProjectNodeItem[]>) || {},
+    [selectDataQuery.data?.projectTreeByCatalogId]
+  );
+  const hasRealCatalogData = catalogs.length > 0;
+
   const [chooseModalOpen, setChooseModalOpen] = useState(false);
-  const [activeCatalogId, setActiveCatalogId] = useState(dataCatalogs[0]?.id || '');
+  const [activeCatalogId, setActiveCatalogId] = useState('');
   const [selectedNodeMap, setSelectedNodeMap] = useState<Record<string, React.Key[]>>({});
   const [draftCatalogId, setDraftCatalogId] = useState(activeCatalogId);
   const [draftSelectedNodeMap, setDraftSelectedNodeMap] = useState<Record<string, React.Key[]>>({});
+
+  useEffect(() => {
+    const catalogIdSet = new Set(catalogs.map(item => item.id));
+    const fallbackCatalogId = catalogs[0]?.id || '';
+    const nextActiveCatalogId = catalogIdSet.has(activeCatalogId) ? activeCatalogId : fallbackCatalogId;
+    const nextDraftCatalogId = catalogIdSet.has(draftCatalogId) ? draftCatalogId : nextActiveCatalogId;
+
+    if (nextActiveCatalogId !== activeCatalogId) {
+      setActiveCatalogId(nextActiveCatalogId);
+    }
+    if (nextDraftCatalogId !== draftCatalogId) {
+      setDraftCatalogId(nextDraftCatalogId);
+    }
+  }, [activeCatalogId, catalogs, draftCatalogId]);
 
   function handleCreate() {
     onCreate();
@@ -35,12 +69,20 @@ const ScheduleCreateView = ({ onCancel, onCreate }: Props) => {
   const currentCheckedKeys = draftSelectedNodeMap[draftCatalogId] || [];
 
   function openChooseModal() {
-    if (!hasRealCatalogData) {
-      window.$message?.error('数据目录真实接口未接入，前端 mock 数据已移除');
+    if (selectDataQuery.isLoading) {
+      window.$message?.info('正在加载项目树，请稍后再试');
       return;
     }
-    setDraftCatalogId(activeCatalogId);
-    setDraftSelectedNodeMap(selectedNodeMap);
+    if (selectDataQuery.isError) {
+      window.$message?.error('加载项目树失败，请稍后重试');
+      return;
+    }
+    if (!hasRealCatalogData) {
+      window.$message?.warning('当前暂无可选数据目录');
+      return;
+    }
+    setDraftCatalogId(activeCatalogId || catalogs[0]?.id || '');
+    setDraftSelectedNodeMap({ ...selectedNodeMap });
     setChooseModalOpen(true);
   }
 
@@ -106,7 +148,7 @@ const ScheduleCreateView = ({ onCancel, onCreate }: Props) => {
     Object.entries(selectedNodeMap).forEach(([catalogId, keys]) => {
       if (!keys.length) return;
 
-      const catalogName = dataCatalogs.find(item => item.id === catalogId)?.name || catalogId;
+      const catalogName = catalogs.find(item => item.id === catalogId)?.name || catalogId;
       const allNodes = flattenProjectNodes(projectTreeByCatalogId[catalogId] || []);
       const allNodeIdSet = new Set(allNodes.map(item => item.id));
       const selectedIdSet = new Set(keys.map(key => String(key)).filter(key => allNodeIdSet.has(key)));
@@ -118,22 +160,22 @@ const ScheduleCreateView = ({ onCancel, onCreate }: Props) => {
     });
 
     return details;
-  }, [selectedNodeMap]);
+  }, [catalogs, projectTreeByCatalogId, selectedNodeMap]);
 
   function handleRemoveCatalog(catalogId: string) {
     setSelectedNodeMap(prev => {
       const next = { ...prev };
-      delete next[catalogId];
+      Reflect.deleteProperty(next, catalogId);
       return next;
     });
     setDraftSelectedNodeMap(prev => {
       const next = { ...prev };
-      delete next[catalogId];
+      Reflect.deleteProperty(next, catalogId);
       return next;
     });
 
     if (activeCatalogId === catalogId) {
-      const fallbackCatalogId = dataCatalogs.find(item => item.id !== catalogId)?.id || '';
+      const fallbackCatalogId = catalogs.find(item => item.id !== catalogId)?.id || catalogs[0]?.id || '';
       setActiveCatalogId(fallbackCatalogId);
       setDraftCatalogId(fallbackCatalogId);
     }
@@ -164,9 +206,7 @@ const ScheduleCreateView = ({ onCancel, onCreate }: Props) => {
           </div>
         </div>
 
-        <p className="m-0 max-w-620px text-15px leading-24px text-[#334155]">
-          配置数据目录与项目后创建任务。当前仅支持真实后端数据源，未接入时将直接报错。
-        </p>
+        <p className="m-0 max-w-620px text-15px leading-24px text-[#334155]">配置数据目录与项目后创建任务。</p>
 
         <ACard
           className="card-wrapper overflow-hidden rounded-16px border-0 shadow-[0_14px_32px_rgba(15,23,42,0.08)]"
@@ -276,7 +316,7 @@ const ScheduleCreateView = ({ onCancel, onCreate }: Props) => {
 
       <ScheduleChooseDataModal
         activeCatalogId={draftCatalogId}
-        catalogs={dataCatalogs}
+        catalogs={catalogs}
         checkedKeys={currentCheckedKeys}
         open={chooseModalOpen}
         projectNodes={currentProjectNodes}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { TableHeaderOperation, useTable, useTableOperate } from '@/features/table';
 
@@ -6,7 +6,6 @@ import ScheduleCreateView from './modules/ScheduleCreateView';
 import ScheduleDetailView from './modules/ScheduleDetailView';
 import ScheduleLogModal from './modules/ScheduleLogModal';
 import ScheduleSearch from './modules/ScheduleSearch';
-import type { RecordWithIndex, ScheduleSearchParams } from './modules/mock';
 import { PAGE_SIZE, fetchScheduleList } from './modules/mock';
 
 const statusColorMap: Record<string, string> = {
@@ -27,6 +26,19 @@ const statusI18nMap: Record<string, string> = {
   success: 'page.dataSchedule.statusSuccess'
 };
 
+const dataScheduleTaskStatusSet = new Set<Api.DataSchedule.TaskStatus>([
+  'pending',
+  'running',
+  'success',
+  'failed',
+  'paused',
+  'stopped'
+]);
+
+function isDataScheduleTaskStatus(value: string): value is Api.DataSchedule.TaskStatus {
+  return dataScheduleTaskStatusSet.has(value as Api.DataSchedule.TaskStatus);
+}
+
 const DataSchedule = () => {
   const { t } = useTranslation();
   const nav = useNavigate();
@@ -34,6 +46,14 @@ const DataSchedule = () => {
   const isCreateMode = searchParams.get('mode') === 'add';
   const isDetailMode = searchParams.get('mode') === 'detail';
   const detailTaskId = searchParams.get('taskId') || '';
+  const incomingTaskStatus = Array.from(
+    new Set(
+      searchParams
+        .getAll('taskStatus')
+        .map(item => item.trim())
+        .filter(isDataScheduleTaskStatus)
+    )
+  );
 
   const tableWrapperRef = useRef<HTMLDivElement>(null);
   const wrapperSize = useSize(tableWrapperRef);
@@ -41,6 +61,7 @@ const DataSchedule = () => {
 
   const isMobile = useMobile();
   const [logModalTask, setLogModalTask] = useState<{ projectName: string; taskId: string } | null>(null);
+  const hasAppliedIncomingTaskStatusRef = useRef(false);
 
   const { columnChecks, data, run, searchProps, setColumnChecks, tableProps } = useTable({
     apiFn: fetchScheduleList,
@@ -178,109 +199,28 @@ const DataSchedule = () => {
         width: 200
       }
     ],
-    pagination: false
+    pagination: {
+      showQuickJumper: true
+    }
   });
 
-  // Infinite scroll state
-  const [allRecords, setAllRecords] = useState<RecordWithIndex[]>([]);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const loadingMoreRef = useRef(false);
-  const hasMoreRef = useRef(true);
-  const currentPageRef = useRef(1);
-  const resetGenRef = useRef(0);
-  const isResettingRef = useRef(false);
-
-  // Reset scroll position helper
-  const resetScrollPosition = useCallback(() => {
-    const wrapper = tableWrapperRef.current;
-    if (wrapper) {
-      const tableBody = wrapper.querySelector('.ant-table-body');
-      if (tableBody) {
-        tableBody.scrollTop = 0;
-      }
-    }
-  }, []);
-
-  // When useTable data changes (initial load or search/reset), reset accumulated data
   useEffect(() => {
-    if (data) {
-      resetGenRef.current += 1;
-      isResettingRef.current = false;
-      setAllRecords(data as RecordWithIndex[]);
-      currentPageRef.current = 1;
-      hasMoreRef.current = data.length >= PAGE_SIZE;
-      resetScrollPosition();
-    }
-  }, [data, resetScrollPosition]);
+    if (hasAppliedIncomingTaskStatusRef.current) return;
+    if (isCreateMode || isDetailMode) return;
+    if (incomingTaskStatus.length === 0) return;
 
-  // Stable loadMore with generation guard against stale results
-  const loadMore = useCallback(async () => {
-    if (loadingMoreRef.current || !hasMoreRef.current) return;
-
-    const gen = resetGenRef.current;
-    loadingMoreRef.current = true;
-    setLoadingMore(true);
-
-    const nextPage = currentPageRef.current + 1;
-    const formValues = searchProps.form.getFieldsValue();
-
-    try {
-      const res = await fetchScheduleList({
-        ...formValues,
-        current: nextPage,
-        size: PAGE_SIZE
-      } as ScheduleSearchParams);
-
-      // Discard results if a reset/search happened while loading
-      if (gen !== resetGenRef.current) return;
-
-      if (res.records.length > 0) {
-        setAllRecords(prev => {
-          const startIndex = prev.length;
-          return [
-            ...prev,
-            ...res.records.map((item, idx) => ({
-              ...item,
-              index: startIndex + idx + 1
-            }))
-          ];
-        });
-        currentPageRef.current = nextPage;
-        hasMoreRef.current = res.records.length >= PAGE_SIZE;
-      } else {
-        hasMoreRef.current = false;
-      }
-    } finally {
-      loadingMoreRef.current = false;
-      setLoadingMore(false);
-    }
-  }, [searchProps.form]);
-
-  // Scroll listener on .ant-table-body for infinite scroll
-  useEffect(() => {
-    const wrapper = tableWrapperRef.current;
-    if (!wrapper) return undefined;
-
-    const tableBody = wrapper.querySelector('.ant-table-body');
-    if (!tableBody) return undefined;
-
-    const handleScroll = () => {
-      const { clientHeight, scrollHeight, scrollTop } = tableBody;
-      if (scrollTop + clientHeight >= scrollHeight - 50) {
-        loadMore();
-      }
-    };
-
-    tableBody.addEventListener('scroll', handleScroll);
-    return () => tableBody.removeEventListener('scroll', handleScroll);
-  }, [loadMore, scrollY]);
+    hasAppliedIncomingTaskStatusRef.current = true;
+    searchProps.form.setFieldsValue({ taskStatus: incomingTaskStatus });
+    run().catch(() => {
+      // keep page render stable if preset filters fail validation unexpectedly
+    });
+  }, [incomingTaskStatus, isCreateMode, isDetailMode, run, searchProps.form]);
 
   // Custom reset: clear all form fields (including createTime etc.) then trigger search
-  const handleReset = useCallback(() => {
-    isResettingRef.current = true;
+  function handleReset() {
     searchProps.form.resetFields();
     searchProps.reset();
-  }, [searchProps]);
+  }
 
   const { checkedRowKeys, onBatchDeleted, rowSelection } = useTableOperate(data, run, async () => {
     // placeholder
@@ -400,9 +340,7 @@ const DataSchedule = () => {
             scroll={{ x: 1500, y: scrollY }}
             size="small"
             {...tableProps}
-            dataSource={allRecords}
-            loading={(!isResettingRef.current && tableProps.loading) || loadingMore}
-            pagination={false}
+            loading={tableProps.loading}
           />
         </div>
       </ACard>
