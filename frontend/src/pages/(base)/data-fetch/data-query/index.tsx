@@ -7,10 +7,28 @@ import DataQueryTable from './modules/DataQueryTable';
 
 const DEFAULT_PAGE_SIZE = 10;
 const EMPTY_INDUSTRY_OPTIONS: Api.DataQuery.IndustryOption[] = [];
+const INDUSTRY_LABEL_MAP: Record<string, string> = {
+  js: '建筑行业',
+  sw: '水务行业'
+};
 
 const DataQuery = () => {
   const industriesQuery = useDataQueryIndustries();
-  const industries = useMemo(() => industriesQuery.data || EMPTY_INDUSTRY_OPTIONS, [industriesQuery.data]);
+  const industries = useMemo(
+    () =>
+      (industriesQuery.data || EMPTY_INDUSTRY_OPTIONS).map(option => {
+        const key = (option.value || '').toLowerCase();
+        const mappedLabel = INDUSTRY_LABEL_MAP[key];
+
+        return mappedLabel
+          ? {
+              ...option,
+              label: mappedLabel
+            }
+          : option;
+      }),
+    [industriesQuery.data]
+  );
   const [formIndustry, setFormIndustry] = useState('');
   const [formProjectName, setFormProjectName] = useState('');
   const [queryParams, setQueryParams] = useState<Api.DataQuery.IndustryPivotParams | null>(null);

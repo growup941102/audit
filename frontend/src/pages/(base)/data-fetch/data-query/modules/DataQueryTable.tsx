@@ -1,4 +1,4 @@
-import { Empty, Table } from 'antd';
+import { Empty, Table, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 
 type DataQueryTableProps = {
@@ -10,18 +10,23 @@ type DataQueryTableProps = {
 const DataQueryTable: FC<DataQueryTableProps> = memo(({ data, loading = false, onPageChange }) => {
   const columns: ColumnsType<Api.DataQuery.IndustryPivotRecord> = (data?.columns || []).map(column => ({
     dataIndex: column.key,
-    ellipsis: true,
-    fixed: column.fixed,
+    ellipsis: { showTitle: false },
+    fixed: column.key === 'projectName' ? undefined : column.fixed,
     key: column.key,
     render: value => {
       const normalized = typeof value === 'string' ? value.trim() : value;
       if (normalized === undefined || normalized === null || normalized === '') {
         return '--';
       }
-      return value as string;
+      const displayValue = String(value);
+      return (
+        <Tooltip title={displayValue}>
+          <span className="block w-full truncate">{displayValue}</span>
+        </Tooltip>
+      );
     },
     title: column.title,
-    width: column.key === 'projectName' ? 240 : 220
+    width: 220
   }));
 
   const records = (data?.records || []).map((item, index) => ({
