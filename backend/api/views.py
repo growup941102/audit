@@ -3389,14 +3389,142 @@ def _build_data_schedule_counts(fields):
     return {'all': len(fields), 'complete': complete, 'missing': missing}
 
 
-def _get_data_schedule_log_meta(task_id):
-    _ = task_id
-    _raise_data_schedule_real_source_error()
+def _resolve_data_schedule_log_project_id(task_id, project_id=''):
+    normalized_project_id = _to_str(project_id)
+    if normalized_project_id:
+        return normalized_project_id
+    return _resolve_data_schedule_project_id_from_task_id(task_id)
 
 
-def _build_data_schedule_log_records(task_id):
-    _ = task_id
-    _raise_data_schedule_real_source_error()
+def _fetch_data_schedule_project_queue_rows(project_id):
+    normalized_project_id = _to_str(project_id)
+    if not normalized_project_id:
+        return []
+    if not _table_exists('c_r_cm_task_item_queue'):
+        return []
+
+    select_parts = [
+        "resource_id AS resourceId",
+        "project_id AS projectId",
+        "file_id AS fileId",
+        "status AS status",
+        "step_no AS stepNo" if _table_has_column('c_r_cm_task_item_queue', 'step_no') else "NULL AS stepNo",
+        "last_error AS lastError" if _table_has_column('c_r_cm_task_item_queue', 'last_error') else "NULL AS lastError",
+        "updated_at AS updatedAt" if _table_has_column('c_r_cm_task_item_queue', 'updated_at') else "NULL AS updatedAt",
+        "locked_by AS lockedBy" if _table_has_column('c_r_cm_task_item_queue', 'locked_by') else "NULL AS lockedBy",
+        "locked_at AS lockedAt" if _table_has_column('c_r_cm_task_item_queue', 'locked_at') else "NULL AS lockedAt",
+        "created_at AS createdAt" if _table_has_column('c_r_cm_task_item_queue', 'created_at') else "NULL AS createdAt",
+        "create_time AS createTime" if _table_has_column('c_r_cm_task_item_queue', 'create_time') else "NULL AS createTime",
+    ]
+
+    order_time_columns = []
+    if _table_has_column('c_r_cm_task_item_queue', 'locked_at'):
+        order_time_columns.append('locked_at')
+    if _table_has_column('c_r_cm_task_item_queue', 'updated_at'):
+        order_time_columns.append('updated_at')
+    if _table_has_column('c_r_cm_task_item_queue', 'created_at'):
+        order_time_columns.append('created_at')
+    if _table_has_column('c_r_cm_task_item_queue', 'create_time'):
+        order_time_columns.append('create_time')
+
+    if order_time_columns:
+        order_sql = f" ORDER BY COALESCE({', '.join(order_time_columns)}) DESC, resource_id DESC"
+    else:
+        order_sql = " ORDER BY resource_id DESC"
+
+    sql = (
+        "SELECT "
+        + ", ".join(select_parts)
+        + " FROM c_r_cm_task_item_queue "
+        "WHERE project_id = %s AND file_id LIKE 'PROJECT:%%'"
+        + order_sql
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql, [normalized_project_id])
+        return _dictfetchall(cursor)
+
+
+def _infer_data_schedule_log_level(status_value, last_error):
+    normalized_status = _to_str(status_value).upper()
+    normalized_last_error = _to_str(last_error)
+    if normalized_last_error or normalized_status in {'FAILED', 'PARTIAL_FAILED', 'ERROR'}:
+        return DATA_SCHEDULE_LOG_LEVEL_ERROR
+    if normalized_status in {'PAUSED', 'STOPPED', 'CANCELLED', 'CANCEL'}:
+        return DATA_SCHEDULE_LOG_LEVEL_WARN
+    return DATA_SCHEDULE_LOG_LEVEL_INFO
+
+
+def _build_data_schedule_queue_log_timestamp(row):
+    for key in ('updatedAt', 'lockedAt', 'createdAt', 'createTime'):
+        parsed = _parse_datetime_value((row or {}).get(key))
+        if parsed:
+            return parsed
+    return None
+
+
+def _build_data_schedule_queue_log_message(row, project_id):
+    message_parts = [f'project_id={_to_str(project_id)}']
+    task_id = _to_str((row or {}).get('resourceId'))
+    if task_id:
+        message_parts.append(f'task_id={task_id}')
+    file_id = _to_str((row or {}).get('fileId'))
+    if file_id:
+        message_parts.append(f'file_id={file_id}')
+    step_no = (row or {}).get('stepNo')
+    if step_no not in (None, ''):
+        message_parts.append(f'step_no={step_no}')
+    status_value = _to_str((row or {}).get('status'))
+    if status_value:
+        message_parts.append(f'status={status_value}')
+    locked_by = _to_str((row or {}).get('lockedBy'))
+    if locked_by:
+        message_parts.append(f'node={locked_by}')
+    last_error = _to_str((row or {}).get('lastError'))
+    if last_error:
+        message_parts.append(f'error={last_error}')
+    return '; '.join(message_parts)
+
+
+def _map_data_schedule_queue_rows_to_logs(rows, project_id):
+    records = []
+    for index, row in enumerate((rows or []), start=1):
+        timestamp = _build_data_schedule_queue_log_timestamp(row)
+        time_text = timestamp.strftime(DATA_SCHEDULE_LOG_TIME_FORMAT) if timestamp else '--'
+        records.append({
+            '_timestamp': timestamp,
+            'component': _to_str((row or {}).get('resourceId')) or 'task-item-queue',
+            'id': index,
+            'level': _infer_data_schedule_log_level((row or {}).get('status'), (row or {}).get('lastError')),
+            'message': _build_data_schedule_queue_log_message(row, project_id),
+            'time': time_text
+        })
+    return records
+
+
+def _get_data_schedule_log_meta(task_id, project_id=''):
+    normalized_project_id = _resolve_data_schedule_log_project_id(task_id, project_id)
+    project_row = _fetch_data_schedule_project_base_row(normalized_project_id) if normalized_project_id else None
+    queue_rows = _fetch_data_schedule_project_queue_rows(normalized_project_id) if normalized_project_id else []
+    latest_row = queue_rows[0] if queue_rows else {}
+
+    normalized_task_id = _to_str(task_id) or _to_str(latest_row.get('resourceId'))
+    if not normalized_task_id and normalized_project_id:
+        normalized_task_id = f'PROJECT:{normalized_project_id}'
+
+    return {
+        'nodeName': _to_str(latest_row.get('lockedBy')) or '--',
+        'projectName': _to_str((project_row or {}).get('projectName')) or normalized_project_id or '--',
+        'serviceName': 'c_r_cm_task_item_queue',
+        'taskId': normalized_task_id,
+    }
+
+
+def _build_data_schedule_log_records(task_id, project_id=''):
+    normalized_project_id = _resolve_data_schedule_log_project_id(task_id, project_id)
+    if not normalized_project_id:
+        return []
+    queue_rows = _fetch_data_schedule_project_queue_rows(normalized_project_id)
+    return _map_data_schedule_queue_rows_to_logs(queue_rows, normalized_project_id)
 
 
 def _parse_data_schedule_log_datetime(raw_value, *, end_of_day=False):
@@ -5686,19 +5814,32 @@ def export_data_schedule_extract_result(request, task_id):
 
 @swagger_auto_schema(
     method='get',
-    operation_description='获取数据调度日志元信息',
+    operation_description='获取数据调度日志元信息（支持 projectId 优先查询）',
+    manual_parameters=[
+        openapi.Parameter('projectId', openapi.IN_QUERY, description='项目ID（可选，优先使用）', type=openapi.TYPE_STRING),
+    ],
     responses={200: '获取成功', 401: '未认证'}
 )
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
-def get_data_schedule_logs_meta(_request, task_id):
-    return success_response(_get_data_schedule_log_meta(task_id), '获取成功')
+def get_data_schedule_logs_meta(request, task_id):
+    project_id = _to_str(request.query_params.get('projectId'))
+    try:
+        return success_response(_get_data_schedule_log_meta(task_id, project_id), '获取成功')
+    except Exception as exc:
+        logger.exception('get data schedule logs meta failed: %s', exc)
+        return error_response(
+            '数据提取日志元信息加载失败，请检查数据库连接',
+            ERROR_CODE_INVALID_PARAMS,
+            status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 @swagger_auto_schema(
     method='get',
     operation_description='获取数据调度日志列表（按条数查询）',
     manual_parameters=[
+        openapi.Parameter('projectId', openapi.IN_QUERY, description='项目ID（可选，优先使用）', type=openapi.TYPE_STRING),
         openapi.Parameter('level', openapi.IN_QUERY, description='日志级别: info/warn/error', type=openapi.TYPE_STRING),
         openapi.Parameter('keyword', openapi.IN_QUERY, description='日志关键字', type=openapi.TYPE_STRING),
         openapi.Parameter('startTime', openapi.IN_QUERY, description='开始时间', type=openapi.TYPE_STRING),
@@ -5721,24 +5862,34 @@ def get_data_schedule_logs(request, task_id):
     if err_msg:
         return error_response(err_msg, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
 
-    records = _build_data_schedule_log_records(task_id)
-    filtered_records = _filter_data_schedule_logs(records, filters)
-    sorted_records = _sort_data_schedule_logs(filtered_records, filters.get('orderDirection'))
-    count = filters.get('count') or DATA_SCHEDULE_LOG_DEFAULT_COUNT
-    sliced_records = sorted_records[:count]
+    project_id = _to_str(request.query_params.get('projectId'))
+    try:
+        records = _build_data_schedule_log_records(task_id, project_id)
+        filtered_records = _filter_data_schedule_logs(records, filters)
+        sorted_records = _sort_data_schedule_logs(filtered_records, filters.get('orderDirection'))
+        count = filters.get('count') or DATA_SCHEDULE_LOG_DEFAULT_COUNT
+        sliced_records = sorted_records[:count]
 
-    data = {
-        'count': count,
-        'records': _serialize_data_schedule_logs(sliced_records),
-        'total': len(sorted_records),
-    }
-    return success_response(data, '获取成功')
+        data = {
+            'count': count,
+            'records': _serialize_data_schedule_logs(sliced_records),
+            'total': len(sorted_records),
+        }
+        return success_response(data, '获取成功')
+    except Exception as exc:
+        logger.exception('get data schedule logs failed: %s', exc)
+        return error_response(
+            '数据提取日志加载失败，请检查数据库连接',
+            ERROR_CODE_INVALID_PARAMS,
+            status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 @swagger_auto_schema(
     method='get',
     operation_description='导出数据调度日志',
     manual_parameters=[
+        openapi.Parameter('projectId', openapi.IN_QUERY, description='项目ID（可选，优先使用）', type=openapi.TYPE_STRING),
         openapi.Parameter('level', openapi.IN_QUERY, description='日志级别: info/warn/error', type=openapi.TYPE_STRING),
         openapi.Parameter('keyword', openapi.IN_QUERY, description='日志关键字', type=openapi.TYPE_STRING),
         openapi.Parameter('startTime', openapi.IN_QUERY, description='开始时间', type=openapi.TYPE_STRING),
@@ -5760,6 +5911,7 @@ def export_data_schedule_logs(request, task_id):
     filters, err_msg = _parse_data_schedule_log_filters(request)
     if err_msg:
         return error_response(err_msg, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+    project_id = _to_str(request.query_params.get('projectId'))
 
     query_snapshot = _get_request_query_snapshot(request)
     _append_data_schedule_export_log(
@@ -5770,17 +5922,16 @@ def export_data_schedule_logs(request, task_id):
         request_params=query_snapshot
     )
 
-    task_meta = _get_data_schedule_log_meta(task_id)
-    records = _build_data_schedule_log_records(task_id)
-    filtered_records = _filter_data_schedule_logs(records, filters)
-    sorted_records = _sort_data_schedule_logs(filtered_records, filters.get('orderDirection'))
-    count = filters.get('count') or DATA_SCHEDULE_LOG_DEFAULT_COUNT
-    sliced_records = sorted_records[:count]
-
     try:
+        task_meta = _get_data_schedule_log_meta(task_id, project_id)
+        records = _build_data_schedule_log_records(task_id, project_id)
+        filtered_records = _filter_data_schedule_logs(records, filters)
+        sorted_records = _sort_data_schedule_logs(filtered_records, filters.get('orderDirection'))
+        count = filters.get('count') or DATA_SCHEDULE_LOG_DEFAULT_COUNT
+        sliced_records = sorted_records[:count]
         binary = _build_data_schedule_log_export_binary(task_meta, filters, sliced_records)
     except Exception as exc:
-        logger.exception('build data schedule logs export failed, task_id=%s', task_id)
+        logger.exception('build data schedule logs export failed, task_id=%s, project_id=%s', task_id, project_id)
         _append_data_schedule_export_log(
             'error',
             'task_logs_export_failed',

@@ -6,6 +6,7 @@ import { useDataScheduleLogs, useDataScheduleLogsMeta } from '@/service/hooks';
 
 interface Props {
   readonly open: boolean;
+  readonly projectId?: string;
   readonly projectName?: string;
   readonly taskId: string;
   readonly onCancel: () => void;
@@ -13,7 +14,7 @@ interface Props {
 
 const LOG_COUNT_OPTIONS = [50, 100, 200, 500, 1000];
 
-const ScheduleLogModal = ({ onCancel, open, projectName, taskId }: Props) => {
+const ScheduleLogModal = ({ onCancel, open, projectId, projectName, taskId }: Props) => {
   const { t } = useTranslation();
   const [keywordInput, setKeywordInput] = useState('');
   const [keyword, setKeyword] = useState('');
@@ -43,12 +44,13 @@ const ScheduleLogModal = ({ onCancel, open, projectName, taskId }: Props) => {
       level,
       orderBy: 'time',
       orderDirection,
+      projectId: projectId || undefined,
       startTime: dateRange[0] ? dateRange[0].format('YYYY-MM-DD HH:mm:ss') : undefined,
       taskId
     };
-  }, [count, dateRange, keyword, level, open, orderDirection, taskId]);
+  }, [count, dateRange, keyword, level, open, orderDirection, projectId, taskId]);
 
-  const metaQuery = useDataScheduleLogsMeta(open ? taskId : null);
+  const metaQuery = useDataScheduleLogsMeta(open && taskId ? { projectId: projectId || undefined, taskId } : null);
   const logsQuery = useDataScheduleLogs(listParams);
 
   const logMeta = metaQuery.data;

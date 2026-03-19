@@ -66,11 +66,11 @@ export function useDataScheduleExtractDrilldown(params: Api.DataSchedule.Drilldo
 }
 
 /** get schedule logs meta hook */
-export function useDataScheduleLogsMeta(taskId: string | null | undefined) {
+export function useDataScheduleLogsMeta(params: Api.DataSchedule.TaskLogMetaParams | null) {
   return useQuery({
-    enabled: Boolean(taskId),
-    queryFn: () => fetchDataScheduleLogsMeta(taskId as string),
-    queryKey: QUERY_KEYS.DATA_SCHEDULE.LOG_META(taskId || '')
+    enabled: Boolean(params?.taskId),
+    queryFn: () => fetchDataScheduleLogsMeta(params as Api.DataSchedule.TaskLogMetaParams),
+    queryKey: QUERY_KEYS.DATA_SCHEDULE.LOG_META(params)
   });
 }
 

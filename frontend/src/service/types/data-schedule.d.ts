@@ -63,6 +63,7 @@ declare namespace Api {
       completeTime: string;
       creator: string;
       progress: number;
+      projectId?: string;
       projectName: string;
       taskId: string;
       taskStatus: TaskStatus;
@@ -195,6 +196,11 @@ declare namespace Api {
       taskId: string;
     };
 
+    type TaskLogMetaParams = {
+      projectId?: string;
+      taskId: string;
+    };
+
     type TaskLogRecord = {
       component: string;
       id: number;
@@ -210,6 +216,7 @@ declare namespace Api {
       level?: LogLevel;
       orderBy?: LogOrderBy;
       orderDirection?: LogOrderDirection;
+      projectId?: string;
       startTime?: string;
       taskId: string;
     };

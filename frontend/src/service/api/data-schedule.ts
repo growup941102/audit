@@ -60,6 +60,9 @@ function buildDataScheduleLogQuery(params: Omit<Api.DataSchedule.TaskLogListPara
   if (params.orderDirection) {
     query.set('orderDirection', params.orderDirection);
   }
+  if (params.projectId) {
+    query.set('projectId', params.projectId);
+  }
   if (params.startTime) {
     query.set('startTime', params.startTime);
   }
@@ -195,9 +198,11 @@ export async function fetchDataScheduleExtractExport(params: Api.DataSchedule.Ex
 }
 
 /** get schedule logs meta info */
-export function fetchDataScheduleLogsMeta(taskId: string) {
+export function fetchDataScheduleLogsMeta(params: Api.DataSchedule.TaskLogMetaParams) {
+  const { projectId, taskId } = params;
   return request<Api.DataSchedule.TaskLogMeta>({
     method: 'get',
+    params: projectId ? { projectId } : undefined,
     url: DATA_SCHEDULE_URLS.GET_LOGS_META(taskId)
   });
 }

@@ -31,7 +31,7 @@ export const QUERY_KEYS = {
       ['dataSchedule', 'extractFields', params] as const,
     EXTRACT_SUMMARY: (taskId: string) => ['dataSchedule', 'extractSummary', taskId] as const,
     LOG_LIST: (params: Api.DataSchedule.TaskLogListParams | null) => ['dataSchedule', 'logList', params] as const,
-    LOG_META: (taskId: string) => ['dataSchedule', 'logMeta', taskId] as const,
+    LOG_META: (params: Api.DataSchedule.TaskLogMetaParams | null) => ['dataSchedule', 'logMeta', params] as const,
     SELECT_DATA: ['dataSchedule', 'selectData'] as const
   },
   // Route

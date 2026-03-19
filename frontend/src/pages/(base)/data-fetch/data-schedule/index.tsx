@@ -61,7 +61,7 @@ const DataSchedule = () => {
   const scrollY = wrapperSize?.height ? wrapperSize.height - 55 : undefined;
 
   const isMobile = useMobile();
-  const [logModalTask, setLogModalTask] = useState<{ projectName: string; taskId: string } | null>(null);
+  const [logModalTask, setLogModalTask] = useState<{ projectId: string; projectName: string; taskId: string } | null>(null);
   const hasAppliedIncomingTaskStatusRef = useRef(false);
 
   const { columnChecks, data, run, searchProps, setColumnChecks, tableProps } = useTable({
@@ -180,6 +180,7 @@ const DataSchedule = () => {
                 onClick: ({ key }) => {
                   if (key === 'log') {
                     setLogModalTask({
+                      projectId: record.projectId || '',
                       projectName: record.projectName,
                       taskId: record.taskId
                     });
@@ -426,6 +427,7 @@ const DataSchedule = () => {
 
       <ScheduleLogModal
         open={Boolean(logModalTask)}
+        projectId={logModalTask?.projectId}
         projectName={logModalTask?.projectName}
         taskId={logModalTask?.taskId || ''}
         onCancel={() => setLogModalTask(null)}
