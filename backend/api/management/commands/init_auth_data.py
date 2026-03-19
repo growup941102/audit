@@ -1,4 +1,5 @@
 import os
+import secrets
 
 from django.contrib.auth.models import User
 from django.core.management.base import BaseCommand
@@ -19,12 +20,12 @@ class Command(BaseCommand):
 
         created = 0
 
-        create_superuser = parse_bool(os.getenv('INIT_CREATE_SUPERUSER', '1'), default=True)
+        create_superuser = parse_bool(os.getenv('INIT_CREATE_SUPERUSER', '0'), default=False)
         create_demo_users = parse_bool(os.getenv('INIT_CREATE_DEMO_USERS', '0'), default=False)
 
         if create_superuser:
             username = os.getenv('INIT_ADMIN_USERNAME', 'admin')
-            password = os.getenv('INIT_ADMIN_PASSWORD', 'cmcc@tj10086')
+            configured_password = (os.getenv('INIT_ADMIN_PASSWORD') or '').strip()
             email = os.getenv('INIT_ADMIN_EMAIL', 'admin@example.com')
 
             user, is_created = User.objects.get_or_create(
@@ -38,9 +39,16 @@ class Command(BaseCommand):
             )
 
             if is_created:
+                password = configured_password or secrets.token_urlsafe(18)
                 user.set_password(password)
                 user.save(update_fields=['password'])
                 self.stdout.write(self.style.SUCCESS(f'Superuser created: {username}'))
+                if not configured_password:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f'INIT_ADMIN_PASSWORD 未配置，已生成一次性随机密码，请立即改密: {password}'
+                        )
+                    )
                 created += 1
             else:
                 updates = []
@@ -56,8 +64,8 @@ class Command(BaseCommand):
                 if email and user.email != email:
                     user.email = email
                     updates.append('email')
-                if password and not user.check_password(password):
-                    user.set_password(password)
+                if configured_password and not user.check_password(configured_password):
+                    user.set_password(configured_password)
                     updates.append('password')
 
                 if updates:

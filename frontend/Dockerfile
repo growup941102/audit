@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -9,8 +9,15 @@ COPY packages ./packages
 
 RUN pnpm install
 
-COPY . .
+COPY . ./
 
-EXPOSE 3000
+RUN pnpm build
 
-CMD ["pnpm", "dev", "--host"]
+FROM nginx:1.27-alpine
+
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]

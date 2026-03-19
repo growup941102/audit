@@ -20,11 +20,12 @@ docker-compose exec backend python manage.py createsuperuser
 > 使用仓库中的 `docker-compose.yml` 启动时，后端容器会自动执行：
 > `migrate -> init_auth_data -> runserver`，无需手动迁移。
 >
-> 默认会自动初始化以下账号（不存在时创建）：
-> - `admin / Admin@123456`（超级管理员）
-> - `Super / 123456`
-> - `Admin / 123456`
-> - `User / 123456`
+> 管理员账号与密码来自环境变量，不在文档中提供默认明文凭据：
+> - `INIT_ADMIN_USERNAME`
+> - `INIT_ADMIN_PASSWORD`
+> - `INIT_ADMIN_EMAIL`
+>
+> 仅当 `INIT_CREATE_DEMO_USERS=1` 时才会创建演示账号（仅建议本地调试使用，勿用于测试/生产环境）。
 
 ### 2. API端点
 
@@ -59,4 +60,4 @@ docker-compose exec backend python manage.py createsuperuser
 
 ## 测试
 
-启动服务后访问 `http://localhost:3000/login` 进行测试
+启动服务后访问 `http://localhost/login`（容器部署）或本地前端地址进行测试
