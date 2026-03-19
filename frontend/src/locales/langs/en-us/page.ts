@@ -371,6 +371,34 @@ const page: App.I18n.Schema['translation']['page'] = {
       text: 'Watermark Text'
     },
     websiteName: 'Website Name'
+  },
+  systemSettings: {
+    userManage: {
+      addUser: 'Add User',
+      batchDeleteFailed: 'Failed to delete {{count}} users',
+      batchDeleteSuccess: 'Deleted {{count}} users',
+      createTime: 'Create Time',
+      editUser: 'Edit User',
+      form: {
+        confirmPassword: 'Please confirm password',
+        invalidEmail: 'Invalid email format',
+        password: 'Please enter password',
+        passwordEdit: 'Leave blank to keep current password; input a new one to update',
+        passwordFirst: 'Please input password first',
+        passwordRule: 'Password must be 6-18 chars, include letters and numbers, @ is allowed',
+        passwordNotMatch: 'Passwords do not match',
+        userEmail: 'Please enter email',
+        userName: 'Please enter user name',
+        userStatus: 'Please select status'
+      },
+      title: 'User Manage',
+      updateTime: 'Update Time',
+      userConfirmPassword: 'Confirm Password',
+      userEmail: 'Email',
+      userName: 'User Name',
+      userPassword: 'Password',
+      userStatus: 'Status'
+    }
   }
 };
 

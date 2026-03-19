@@ -62,6 +62,39 @@ declare namespace Api {
     /** 用户列表 */
     type UserList = Common.PaginatingQueryRecord<User>;
 
+    /** auth_user 用户（系统设置） */
+    type AuthUser = {
+      /** 创建时间 */
+      createTime: string;
+      /** 记录 ID */
+      id: number;
+      /** 状态（1 可用 / 2 禁用） */
+      status: Api.Common.EnableStatus;
+      /** 更新时间 */
+      updateTime: string;
+      /** 邮箱 */
+      userEmail: string;
+      /** 用户名 */
+      userName: string;
+    };
+
+    /** auth_user 列表查询参数 */
+    type AuthUserSearchParams = CommonType.RecordNullable<
+      Pick<Api.SystemManage.AuthUser, 'status' | 'userEmail' | 'userName'> & CommonSearchParams
+    >;
+
+    /** auth_user 列表 */
+    type AuthUserList = Common.PaginatingQueryRecord<AuthUser>;
+
+    /** auth_user 新增/编辑参数 */
+    type AuthUserOperateParams = {
+      confirmPassword?: string;
+      email?: string;
+      password?: string;
+      status: Api.Common.EnableStatus;
+      userName: string;
+    };
+
     /**
      * 菜单类型
      *

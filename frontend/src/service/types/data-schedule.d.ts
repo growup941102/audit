@@ -7,6 +7,7 @@ declare namespace Api {
   namespace DataSchedule {
     type Scope = 'all' | 'complete' | 'missing';
     type TaskStatus = 'failed' | 'paused' | 'pending' | 'running' | 'stopped' | 'success';
+    type TaskAction = 'continue' | 'delete' | 'pause' | 'reExecute' | 'refresh' | 'stop';
 
     type ScopeCounts = {
       all: number;
@@ -80,6 +81,23 @@ declare namespace Api {
     };
 
     type TaskList = Common.PaginatingQueryRecord<TaskListRecord>;
+
+    type TaskActionParams = {
+      action: TaskAction;
+      taskIds?: string[];
+    };
+
+    type TaskActionResult = {
+      action: TaskAction;
+      deleted: number;
+      fileReset: number;
+      invalidTaskIds: string[];
+      refreshedAt?: string;
+      requested: number;
+      statusStats?: Partial<Record<TaskStatus, number>>;
+      total?: number;
+      updated: number;
+    };
 
     type FieldRecord = {
       canDrilldown: boolean;

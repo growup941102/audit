@@ -163,6 +163,7 @@ DATA_SCHEDULE_LOG_DEFAULT_COUNT = 100
 DATA_SCHEDULE_LOG_MAX_COUNT = 1000
 DATA_SCHEDULE_TASK_DEFAULT_SIZE = 10
 DATA_SCHEDULE_TASK_MAX_SIZE = 100
+DATA_SCHEDULE_TASK_ACTION_MAX_SIZE = 200
 DATA_SCHEDULE_TASK_STATUS_PENDING = 'pending'
 DATA_SCHEDULE_TASK_STATUS_RUNNING = 'running'
 DATA_SCHEDULE_TASK_STATUS_SUCCESS = 'success'
@@ -176,6 +177,20 @@ DATA_SCHEDULE_TASK_STATUS_SET = {
     DATA_SCHEDULE_TASK_STATUS_FAILED,
     DATA_SCHEDULE_TASK_STATUS_PAUSED,
     DATA_SCHEDULE_TASK_STATUS_STOPPED,
+}
+DATA_SCHEDULE_TASK_ACTION_RE_EXECUTE = 'reExecute'
+DATA_SCHEDULE_TASK_ACTION_CONTINUE = 'continue'
+DATA_SCHEDULE_TASK_ACTION_PAUSE = 'pause'
+DATA_SCHEDULE_TASK_ACTION_STOP = 'stop'
+DATA_SCHEDULE_TASK_ACTION_DELETE = 'delete'
+DATA_SCHEDULE_TASK_ACTION_REFRESH = 'refresh'
+DATA_SCHEDULE_TASK_ACTION_SET = {
+    DATA_SCHEDULE_TASK_ACTION_RE_EXECUTE,
+    DATA_SCHEDULE_TASK_ACTION_CONTINUE,
+    DATA_SCHEDULE_TASK_ACTION_PAUSE,
+    DATA_SCHEDULE_TASK_ACTION_STOP,
+    DATA_SCHEDULE_TASK_ACTION_DELETE,
+    DATA_SCHEDULE_TASK_ACTION_REFRESH,
 }
 DATA_SCHEDULE_LOG_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
 DATA_SCHEDULE_FIELD_VALUE_MAX_LENGTH = 5000
@@ -253,7 +268,7 @@ DATA_SCHEDULE_PROJECT_ROOT_PATH_COLUMN_CANDIDATES = (
 )
 
 PROJECT_STATUS_RUNNING_TASK_SET = {'RUNNING', 'CLAIMED', 'LOCKED'}
-PROJECT_STATUS_FAILED_TASK_SET = {'FAILED', 'CANCELLED'}
+PROJECT_STATUS_FAILED_TASK_SET = {'FAILED', 'CANCELLED', 'CANCEL'}
 PROJECT_STATUS_CATEGORY_COMPLETED = 'completed'
 PROJECT_STATUS_CATEGORY_RUNNING = 'running'
 PROJECT_STATUS_CATEGORY_REMAINING = 'remaining'
@@ -266,6 +281,11 @@ PROJECT_STATUS_CATEGORY_SET = {
 }
 PROJECT_STATUS_RANKING_DEFAULT_LIMIT = 20
 PROJECT_STATUS_RANKING_MAX_LIMIT = 100
+
+SYSTEM_MANAGE_USER_DEFAULT_SIZE = 10
+SYSTEM_MANAGE_USER_MAX_SIZE = 100
+SYSTEM_MANAGE_USER_STATUS_ENABLED = '1'
+SYSTEM_MANAGE_USER_STATUS_DISABLED = '2'
 
 
 def _parse_positive_int(value, default=1, max_value=200):
@@ -449,17 +469,47 @@ def _fetch_data_schedule_project_root_paths():
     if not root_path_column:
         return []
 
-    valid_project_where_clause = _build_valid_project_where_clause('p')
+    project_scope_where_clause = _build_data_schedule_select_data_project_where_clause('p')
     sql = (
         f"SELECT DISTINCT p.{root_path_column} AS rootPath "
         "FROM c_r_cm_project p "
-        f"WHERE {valid_project_where_clause} "
+        f"WHERE {project_scope_where_clause} "
         f"AND p.{root_path_column} IS NOT NULL "
         f"AND TRIM(p.{root_path_column}) != ''"
     )
     with connection.cursor() as cursor:
         cursor.execute(sql)
         return _dictfetchall(cursor)
+
+
+def _build_data_schedule_select_data_project_where_clause(table_alias='p'):
+    valid_project_where_clause = _build_valid_project_where_clause(table_alias)
+    alias_prefix = f'{table_alias}.' if table_alias else ''
+    reverse_conditions = []
+
+    if _table_exists('c_r_cm_file_prepare'):
+        reverse_conditions.append(
+            "NOT EXISTS ("
+            "SELECT 1 FROM c_r_cm_file_prepare f "
+            f"WHERE f.project_id = {alias_prefix}project_id"
+            ")"
+        )
+    if _table_exists('c_r_cm_task_item_queue'):
+        reverse_conditions.append(
+            "NOT EXISTS ("
+            "SELECT 1 FROM c_r_cm_task_item_queue q "
+            f"WHERE q.project_id = {alias_prefix}project_id "
+            "AND q.file_id LIKE 'PROJECT:%'"
+            ")"
+        )
+
+    if not reverse_conditions:
+        return valid_project_where_clause
+
+    reverse_where_clause = '(' + ' OR '.join(reverse_conditions) + ')'
+    if valid_project_where_clause:
+        return f'{valid_project_where_clause} AND {reverse_where_clause}'
+    return reverse_where_clause
 
 
 def _build_data_schedule_select_data_payload():
@@ -611,6 +661,28 @@ def _fetch_data_schedule_project_base_row(project_id):
     if not rows:
         return None
     return rows[0]
+
+
+def _resolve_data_schedule_kb_project_id_from_file_prepare_project_id(file_prepare_project_id):
+    normalized_project_id = _to_str(file_prepare_project_id)
+    if not normalized_project_id:
+        return ''
+    if not _table_exists('c_r_cm_kb_project_relation'):
+        return ''
+
+    sql = (
+        "SELECT project_id AS projectId "
+        "FROM c_r_cm_kb_project_relation "
+        "WHERE file_prepare_project_id = %s "
+        "ORDER BY update_time DESC, create_time DESC, id DESC "
+        "LIMIT 1"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql, [normalized_project_id])
+        rows = _dictfetchall(cursor)
+    if not rows:
+        return ''
+    return _to_str(rows[0].get('projectId'))
 
 
 def _find_data_schedule_task_row(task_id):
@@ -1172,6 +1244,273 @@ def _normalize_data_schedule_task_status(raw_status):
     return None
 
 
+def _normalize_data_schedule_task_action(raw_action):
+    raw = _to_str(raw_action)
+    if not raw:
+        return ''
+
+    normalized = raw.replace('-', '').replace('_', '').strip().lower()
+    action_map = {
+        'batchdelete': DATA_SCHEDULE_TASK_ACTION_DELETE,
+        'continue': DATA_SCHEDULE_TASK_ACTION_CONTINUE,
+        'delete': DATA_SCHEDULE_TASK_ACTION_DELETE,
+        'pause': DATA_SCHEDULE_TASK_ACTION_PAUSE,
+        'refresh': DATA_SCHEDULE_TASK_ACTION_REFRESH,
+        'reexecute': DATA_SCHEDULE_TASK_ACTION_RE_EXECUTE,
+        'retry': DATA_SCHEDULE_TASK_ACTION_RE_EXECUTE,
+        'resume': DATA_SCHEDULE_TASK_ACTION_CONTINUE,
+        'stop': DATA_SCHEDULE_TASK_ACTION_STOP,
+    }
+    return action_map.get(normalized, '')
+
+
+def _normalize_data_schedule_task_ids(raw_task_ids):
+    if raw_task_ids is None:
+        return []
+
+    if isinstance(raw_task_ids, str):
+        items = [item for item in raw_task_ids.split(',')]
+    elif isinstance(raw_task_ids, (list, tuple, set)):
+        items = list(raw_task_ids)
+    else:
+        items = [raw_task_ids]
+
+    normalized_ids = []
+    seen = set()
+    for item in items:
+        if isinstance(item, (list, tuple, set)):
+            nested = item
+        else:
+            nested = [item]
+
+        for value in nested:
+            task_id = _to_str(value)
+            if not task_id or task_id in seen:
+                continue
+            seen.add(task_id)
+            normalized_ids.append(task_id)
+    return normalized_ids
+
+
+def _fetch_data_schedule_action_task_rows(task_ids):
+    normalized_task_ids = _normalize_data_schedule_task_ids(task_ids)
+    if not normalized_task_ids:
+        return []
+
+    where_clause, params = _build_data_schedule_where_with_values('resource_id', normalized_task_ids)
+    if where_clause is None:
+        return []
+
+    sql = (
+        "SELECT resource_id AS taskId, "
+        "project_id AS projectId, "
+        "file_id AS fileId, "
+        "status AS taskQueueStatus "
+        "FROM c_r_cm_task_item_queue "
+        f"WHERE {where_clause} "
+        "AND file_id LIKE 'PROJECT:%%'"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params)
+        return _dictfetchall(cursor)
+
+
+def _reset_data_schedule_file_prepare_failed_to_pending(project_ids):
+    normalized_project_ids = [_to_str(item) for item in (project_ids or []) if _to_str(item)]
+    if not normalized_project_ids:
+        return 0
+
+    where_clause, params = _build_data_schedule_where_with_values('project_id', normalized_project_ids)
+    if where_clause is None:
+        return 0
+
+    sql = (
+        "UPDATE c_r_cm_file_prepare "
+        "SET status='PENDING', "
+        "last_error=NULL, "
+        "updated_at=CURRENT_TIMESTAMP "
+        f"WHERE {where_clause} "
+        "AND status IN ('FAILED','PARTIAL_FAILED')"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params)
+        return cursor.rowcount or 0
+
+
+def _update_data_schedule_queue_items(task_ids, next_status, allow_statuses=None, reset_error=False):
+    normalized_task_ids = [_to_str(item) for item in (task_ids or []) if _to_str(item)]
+    if not normalized_task_ids:
+        return 0
+
+    where_clause, params = _build_data_schedule_where_with_values('resource_id', normalized_task_ids)
+    if where_clause is None:
+        return 0
+
+    set_parts = [
+        f"status='{next_status}'",
+        "locked_by=NULL",
+        "locked_at=NULL",
+        "updated_at=CURRENT_TIMESTAMP",
+    ]
+    if _table_has_column('c_r_cm_task_item_queue', 'attempt_count') and next_status == 'PENDING':
+        set_parts.append("attempt_count=0")
+    if _table_has_column('c_r_cm_task_item_queue', 'available_at') and next_status == 'PENDING':
+        set_parts.append("available_at=CURRENT_TIMESTAMP")
+    if _table_has_column('c_r_cm_task_item_queue', 'last_error') and reset_error:
+        set_parts.append("last_error=NULL")
+
+    sql = (
+        "UPDATE c_r_cm_task_item_queue "
+        f"SET {', '.join(set_parts)} "
+        f"WHERE {where_clause} "
+        "AND file_id LIKE 'PROJECT:%%'"
+    )
+    if allow_statuses:
+        allow_clause, allow_params = _build_data_schedule_where_with_values('status', allow_statuses)
+        if allow_clause:
+            sql += f" AND {allow_clause}"
+            params.extend(allow_params)
+
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params)
+        return cursor.rowcount or 0
+
+
+def _delete_data_schedule_queue_items(task_ids):
+    normalized_task_ids = [_to_str(item) for item in (task_ids or []) if _to_str(item)]
+    if not normalized_task_ids:
+        return 0
+
+    where_clause, params = _build_data_schedule_where_with_values('resource_id', normalized_task_ids)
+    if where_clause is None:
+        return 0
+
+    sql = (
+        "DELETE FROM c_r_cm_task_item_queue "
+        f"WHERE {where_clause} "
+        "AND file_id LIKE 'PROJECT:%%'"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params)
+        return cursor.rowcount or 0
+
+
+def _build_data_schedule_task_refresh_payload():
+    rows = _build_data_schedule_task_rows()
+    stats = {
+        DATA_SCHEDULE_TASK_STATUS_FAILED: 0,
+        DATA_SCHEDULE_TASK_STATUS_PAUSED: 0,
+        DATA_SCHEDULE_TASK_STATUS_PENDING: 0,
+        DATA_SCHEDULE_TASK_STATUS_RUNNING: 0,
+        DATA_SCHEDULE_TASK_STATUS_STOPPED: 0,
+        DATA_SCHEDULE_TASK_STATUS_SUCCESS: 0,
+    }
+    for row in rows:
+        status_value = _to_str(row.get('taskStatus')).lower()
+        if status_value in stats:
+            stats[status_value] += 1
+
+    return {
+        'refreshedAt': datetime.now().strftime(DATA_SCHEDULE_LOG_TIME_FORMAT),
+        'statusStats': stats,
+        'total': len(rows),
+    }
+
+
+def _operate_data_schedule_tasks(action, task_rows):
+    action_value = _normalize_data_schedule_task_action(action)
+    if action_value not in DATA_SCHEDULE_TASK_ACTION_SET:
+        raise ValueError('action 参数无效')
+
+    task_ids = [_to_str(item.get('taskId')) for item in (task_rows or []) if _to_str(item.get('taskId'))]
+    project_ids = [_to_str(item.get('projectId')) for item in (task_rows or []) if _to_str(item.get('projectId'))]
+    deduped_project_ids = []
+    seen_projects = set()
+    for project_id in project_ids:
+        if project_id in seen_projects:
+            continue
+        seen_projects.add(project_id)
+        deduped_project_ids.append(project_id)
+
+    if action_value == DATA_SCHEDULE_TASK_ACTION_REFRESH:
+        return {
+            'deleted': 0,
+            'fileReset': 0,
+            'updated': 0,
+        }
+
+    if not task_ids:
+        return {
+            'deleted': 0,
+            'fileReset': 0,
+            'updated': 0,
+        }
+
+    with transaction.atomic():
+        if action_value == DATA_SCHEDULE_TASK_ACTION_RE_EXECUTE:
+            updated = _update_data_schedule_queue_items(task_ids, 'PENDING', allow_statuses=None, reset_error=True)
+            file_reset = _reset_data_schedule_file_prepare_failed_to_pending(deduped_project_ids)
+            return {
+                'deleted': 0,
+                'fileReset': file_reset,
+                'updated': updated,
+            }
+
+        if action_value == DATA_SCHEDULE_TASK_ACTION_CONTINUE:
+            updated = _update_data_schedule_queue_items(
+                task_ids,
+                'PENDING',
+                allow_statuses=['PAUSED', 'STOPPED', 'CANCELLED', 'CANCEL', 'FAILED', 'PARTIAL_FAILED'],
+                reset_error=True
+            )
+            file_reset = _reset_data_schedule_file_prepare_failed_to_pending(deduped_project_ids)
+            return {
+                'deleted': 0,
+                'fileReset': file_reset,
+                'updated': updated,
+            }
+
+        if action_value == DATA_SCHEDULE_TASK_ACTION_PAUSE:
+            updated = _update_data_schedule_queue_items(
+                task_ids,
+                'PAUSED',
+                allow_statuses=['PENDING', 'CLAIMED', 'RUNNING'],
+                reset_error=False
+            )
+            return {
+                'deleted': 0,
+                'fileReset': 0,
+                'updated': updated,
+            }
+
+        if action_value == DATA_SCHEDULE_TASK_ACTION_STOP:
+            updated = _update_data_schedule_queue_items(
+                task_ids,
+                'CANCEL',
+                allow_statuses=['PENDING', 'CLAIMED', 'RUNNING', 'PAUSED'],
+                reset_error=False
+            )
+            return {
+                'deleted': 0,
+                'fileReset': 0,
+                'updated': updated,
+            }
+
+        if action_value == DATA_SCHEDULE_TASK_ACTION_DELETE:
+            deleted = _delete_data_schedule_queue_items(task_ids)
+            return {
+                'deleted': deleted,
+                'fileReset': 0,
+                'updated': 0,
+            }
+
+    return {
+        'deleted': 0,
+        'fileReset': 0,
+        'updated': 0,
+    }
+
+
 def _parse_data_schedule_task_filters(request):
     current = _parse_positive_int(request.query_params.get('current'), default=1, max_value=100000)
     size = _parse_positive_int(
@@ -1251,7 +1590,7 @@ def _map_project_row_to_schedule_task_status(project_row):
     latest_task_status = _to_str(project_row.get('latestTaskStatus')).upper()
     if latest_task_status == 'PAUSED':
         return DATA_SCHEDULE_TASK_STATUS_PAUSED
-    if latest_task_status in {'CANCELLED', 'STOPPED'}:
+    if latest_task_status in {'CANCELLED', 'CANCEL', 'STOPPED'}:
         return DATA_SCHEDULE_TASK_STATUS_STOPPED
 
     normalized_status = _to_str(project_row.get('status')).upper()
@@ -1288,11 +1627,17 @@ def _build_data_schedule_task_rows():
 
     records = []
     for project_row in project_rows:
+        file_stats = project_row.get('fileStats') or {}
+        if _to_int(file_stats.get('totalFiles')) <= 0:
+            continue
+        if not _to_str(project_row.get('latestTaskId')):
+            continue
+
         project_id = _to_str(project_row.get('projectId'))
         project_name = _to_str(project_row.get('projectName'))
         task_id = _to_str(project_row.get('latestTaskId')) or f'PROJECT:{project_id}'
         task_status = _map_project_row_to_schedule_task_status(project_row)
-        progress = _build_data_schedule_progress(project_row.get('fileStats'))
+        progress = _build_data_schedule_progress(file_stats)
 
         project_meta = project_meta_map.get(project_id, {})
         creator = (
@@ -1847,14 +2192,18 @@ def _build_data_schedule_detail_context(task_id):
     if not task_row:
         raise ValueError('任务不存在')
 
-    project_id = _to_str(task_row.get('projectId')) or _resolve_data_schedule_project_id_from_task_id(task_id)
-    project_row = _fetch_data_schedule_project_base_row(project_id)
+    file_prepare_project_id = _to_str(task_row.get('projectId')) or _resolve_data_schedule_project_id_from_task_id(task_id)
+    project_row = _fetch_data_schedule_project_base_row(file_prepare_project_id)
     if not project_row:
         raise ValueError('项目不存在或无有效行业信息')
 
     industry = _normalize_data_schedule_detail_industry(project_row.get('industry'))
     if not industry:
         raise RuntimeError('项目行业为空，无法加载详情')
+
+    kb_project_id = _resolve_data_schedule_kb_project_id_from_file_prepare_project_id(file_prepare_project_id)
+    if not kb_project_id:
+        raise ValueError('项目映射不存在')
 
     config = _get_data_schedule_industry_table_config(industry)
     if config is None:
@@ -1863,8 +2212,9 @@ def _build_data_schedule_detail_context(task_id):
     return {
         'agentIds': set(),
         'config': config,
+        'filePrepareProjectId': file_prepare_project_id,
         'industry': industry,
-        'projectId': _to_str(project_row.get('projectId')),
+        'projectId': kb_project_id,
         'projectName': _to_str(project_row.get('projectName')),
         'sectionIds': set(),
         'taskId': _to_str(task_row.get('taskId')) or _to_str(task_id),
@@ -2001,7 +2351,7 @@ def _build_data_schedule_detail_bundle(task_id):
     detail = {
         **summary,
         'industry': _to_str(context.get('industry')),
-        'projectId': _to_str(context.get('projectId')),
+        'projectId': _to_str(context.get('filePrepareProjectId')) or _to_str(context.get('projectId')),
     }
 
     return {
@@ -2767,6 +3117,90 @@ def _supports_watermark_hidden_mode():
 
 def _clean_username(raw_username):
     return (raw_username or '').strip()
+
+
+def _normalize_system_manage_user_status(raw_status):
+    if isinstance(raw_status, bool):
+        return raw_status
+
+    normalized = _to_str(raw_status).lower()
+    if not normalized:
+        return None
+
+    if normalized in {'1', 'true', 'enabled', 'enable', 'active'}:
+        return True
+    if normalized in {'2', 'false', 'disabled', 'disable', 'inactive'}:
+        return False
+
+    return None
+
+
+def _resolve_system_manage_user_update_time(user):
+    for field_name in ('update_time', 'updated_at', 'modified_at', 'last_login', 'date_joined'):
+        value = getattr(user, field_name, None)
+        if value:
+            return value
+    return None
+
+
+def _serialize_system_manage_user_row(user):
+    create_time = _format_datetime_text(getattr(user, 'date_joined', None)) or ''
+    update_time = _format_datetime_text(_resolve_system_manage_user_update_time(user)) or create_time
+
+    return {
+        'id': int(getattr(user, 'id', 0) or 0),
+        'userName': _to_str(getattr(user, 'username', '')),
+        'status': SYSTEM_MANAGE_USER_STATUS_ENABLED if bool(getattr(user, 'is_active', False)) else SYSTEM_MANAGE_USER_STATUS_DISABLED,
+        'userEmail': _to_str(getattr(user, 'email', '')),
+        'createTime': create_time,
+        'updateTime': update_time,
+    }
+
+
+def _apply_system_manage_user_password(user, password):
+    plain_text = str(password or '')
+    if plain_text:
+        user.set_password(plain_text)
+
+
+def _validate_system_manage_user_payload(raw_payload, is_create):
+    payload = raw_payload if isinstance(raw_payload, dict) else {}
+
+    username = _clean_username(payload.get('userName') or payload.get('username'))
+    if not username:
+        return None, '用户名不能为空'
+    if len(username) > 150:
+        return None, '用户名长度不能超过150个字符'
+
+    email = _to_str(payload.get('email') or payload.get('userEmail'))
+    if len(email) > 254:
+        return None, '邮箱长度不能超过254个字符'
+
+    raw_status = payload.get('status')
+    if raw_status is None:
+        raw_status = payload.get('userStatus')
+    status_value = _normalize_system_manage_user_status(raw_status)
+    if status_value is None:
+        return None, '状态参数无效，仅支持 1(可用)/2(禁用)'
+
+    password = str(payload.get('password') or '')
+    confirm_password = str(payload.get('confirmPassword') or payload.get('confirm_password') or '')
+    if is_create and not password:
+        return None, '密码不能为空'
+    if password or confirm_password:
+        if password != confirm_password:
+            return None, '两次输入的密码不一致'
+        try:
+            validate_password(password)
+        except ValidationError as exc:
+            return None, exc.messages[0]
+
+    return {
+        'email': email,
+        'is_active': status_value,
+        'password': password,
+        'username': username,
+    }, ''
 
 
 def _create_refresh_token(user):
@@ -3796,6 +4230,75 @@ def get_data_schedule_select_data(_request):
 
 
 @swagger_auto_schema(
+    method='post',
+    operation_description='执行数据调度任务动作（重新执行/继续执行/暂停/停止/删除/刷新）',
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['action'],
+        properties={
+            'action': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                description='动作标识：reExecute/continue/pause/stop/delete/refresh'
+            ),
+            'taskIds': openapi.Schema(
+                type=openapi.TYPE_ARRAY,
+                items=openapi.Items(type=openapi.TYPE_STRING),
+                description='任务ID列表（action=refresh 时可为空）'
+            ),
+        }
+    ),
+    responses={200: '执行成功', 400: '参数错误', 401: '未认证'}
+)
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def operate_data_schedule_tasks(request):
+    action = _normalize_data_schedule_task_action(request.data.get('action'))
+    if action not in DATA_SCHEDULE_TASK_ACTION_SET:
+        return error_response(
+            'action 参数无效，仅支持 reExecute/continue/pause/stop/delete/refresh',
+            ERROR_CODE_INVALID_PARAMS,
+            status.HTTP_400_BAD_REQUEST
+        )
+
+    task_ids = _normalize_data_schedule_task_ids(request.data.get('taskIds'))
+    if action != DATA_SCHEDULE_TASK_ACTION_REFRESH and not task_ids:
+        return error_response('taskIds 不能为空', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+    if len(task_ids) > DATA_SCHEDULE_TASK_ACTION_MAX_SIZE:
+        return error_response(
+            f'taskIds 数量不能超过 {DATA_SCHEDULE_TASK_ACTION_MAX_SIZE}',
+            ERROR_CODE_INVALID_PARAMS,
+            status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        task_rows = _fetch_data_schedule_action_task_rows(task_ids)
+        valid_task_id_set = {_to_str(item.get('taskId')) for item in task_rows if _to_str(item.get('taskId'))}
+        invalid_task_ids = [task_id for task_id in task_ids if task_id not in valid_task_id_set]
+
+        operate_result = _operate_data_schedule_tasks(action, task_rows)
+
+        payload = {
+            'action': action,
+            'deleted': _to_int(operate_result.get('deleted')),
+            'fileReset': _to_int(operate_result.get('fileReset')),
+            'invalidTaskIds': invalid_task_ids,
+            'requested': len(task_ids),
+            'updated': _to_int(operate_result.get('updated')),
+        }
+        if action == DATA_SCHEDULE_TASK_ACTION_REFRESH:
+            payload.update(_build_data_schedule_task_refresh_payload())
+
+        return success_response(payload, '执行成功')
+    except Exception as exc:
+        logger.exception('operate data schedule tasks failed: %s', exc)
+        return error_response(
+            '数据调度任务动作执行失败，请检查数据库连接',
+            ERROR_CODE_INVALID_PARAMS,
+            status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@swagger_auto_schema(
     method='get',
     operation_description='获取数据调度任务列表',
     manual_parameters=[
@@ -4656,6 +5159,180 @@ def update_website_settings(request):
     _cleanup_stale_website_assets(previous_logo, previous_favicon, payload['logo'], payload['favicon'])
 
     return success_response(True, '更新成功')
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='系统设置-用户管理列表（auth_user）',
+    manual_parameters=[
+        openapi.Parameter('current', openapi.IN_QUERY, description='页码，默认1', type=openapi.TYPE_INTEGER),
+        openapi.Parameter(
+            'size',
+            openapi.IN_QUERY,
+            description=f'每页条数，默认{SYSTEM_MANAGE_USER_DEFAULT_SIZE}，最大{SYSTEM_MANAGE_USER_MAX_SIZE}',
+            type=openapi.TYPE_INTEGER
+        ),
+        openapi.Parameter('userName', openapi.IN_QUERY, description='用户名（模糊匹配）', type=openapi.TYPE_STRING),
+        openapi.Parameter('userEmail', openapi.IN_QUERY, description='邮箱（模糊匹配）', type=openapi.TYPE_STRING),
+        openapi.Parameter('status', openapi.IN_QUERY, description='状态：1=可用，2=禁用', type=openapi.TYPE_STRING),
+    ],
+    responses={200: '获取成功', 400: '参数错误', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_system_manage_users(request):
+    current = _parse_positive_int(request.query_params.get('current'), default=1, max_value=100000)
+    size = _parse_positive_int(
+        request.query_params.get('size'),
+        default=SYSTEM_MANAGE_USER_DEFAULT_SIZE,
+        max_value=SYSTEM_MANAGE_USER_MAX_SIZE
+    )
+    username_keyword = _clean_username(request.query_params.get('userName') or request.query_params.get('username'))
+    email_keyword = _to_str(request.query_params.get('userEmail') or request.query_params.get('email'))
+    raw_status = request.query_params.get('status')
+
+    normalized_status = None
+    if raw_status is not None and str(raw_status).strip() != '':
+        normalized_status = _normalize_system_manage_user_status(raw_status)
+        if normalized_status is None:
+            return error_response('status 参数无效，仅支持 1(可用)/2(禁用)', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    try:
+        queryset = User.objects.all().order_by('-id')
+        if username_keyword:
+            queryset = queryset.filter(username__icontains=username_keyword)
+        if email_keyword:
+            queryset = queryset.filter(email__icontains=email_keyword)
+        if normalized_status is not None:
+            queryset = queryset.filter(is_active=normalized_status)
+
+        total = queryset.count()
+        start_index = (current - 1) * size
+        end_index = start_index + size
+        users = list(queryset[start_index:end_index])
+    except Exception as exc:
+        logger.exception('get system manage users failed: %s', exc)
+        return error_response('用户列表查询失败，请检查数据库连接', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    records = [_serialize_system_manage_user_row(user) for user in users]
+    return success_response(
+        {
+            'current': current,
+            'size': size,
+            'total': total,
+            'records': records,
+        },
+        '获取成功'
+    )
+
+
+@swagger_auto_schema(
+    method='post',
+    operation_description='系统设置-新增用户（auth_user）',
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['userName', 'password', 'confirmPassword', 'status'],
+        properties={
+            'userName': openapi.Schema(type=openapi.TYPE_STRING, description='用户名'),
+            'password': openapi.Schema(type=openapi.TYPE_STRING, description='密码'),
+            'confirmPassword': openapi.Schema(type=openapi.TYPE_STRING, description='确认密码'),
+            'email': openapi.Schema(type=openapi.TYPE_STRING, description='邮箱'),
+            'status': openapi.Schema(type=openapi.TYPE_STRING, description='状态：1=可用，2=禁用'),
+        }
+    ),
+    responses={200: '新增成功', 400: '参数错误', 401: '未认证'}
+)
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def create_system_manage_user(request):
+    payload, err_msg = _validate_system_manage_user_payload(request.data or {}, is_create=True)
+    if payload is None:
+        return error_response(err_msg, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    username = payload.get('username')
+    try:
+        if User.objects.filter(username__iexact=username).exists():
+            return error_response('用户名已存在', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+        user = User(
+            email=payload.get('email') or '',
+            is_active=bool(payload.get('is_active')),
+            username=username
+        )
+        _apply_system_manage_user_password(user, payload.get('password'))
+        user.save()
+    except Exception as exc:
+        logger.exception('create system manage user failed: %s', exc)
+        return error_response('新增用户失败，请检查数据库连接', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    return success_response(_serialize_system_manage_user_row(user), '新增成功', status.HTTP_201_CREATED)
+
+
+@swagger_auto_schema(
+    method='put',
+    operation_description='系统设置-编辑用户（auth_user）',
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['userName', 'status'],
+        properties={
+            'userName': openapi.Schema(type=openapi.TYPE_STRING, description='用户名'),
+            'password': openapi.Schema(type=openapi.TYPE_STRING, description='密码（留空则不修改）'),
+            'confirmPassword': openapi.Schema(type=openapi.TYPE_STRING, description='确认密码（留空则不修改）'),
+            'email': openapi.Schema(type=openapi.TYPE_STRING, description='邮箱'),
+            'status': openapi.Schema(type=openapi.TYPE_STRING, description='状态：1=可用，2=禁用'),
+        }
+    ),
+    responses={200: '更新成功', 400: '参数错误', 404: '用户不存在', 401: '未认证'}
+)
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def update_system_manage_user(request, user_id):
+    payload, err_msg = _validate_system_manage_user_payload(request.data or {}, is_create=False)
+    if payload is None:
+        return error_response(err_msg, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    try:
+        user = User.objects.filter(id=user_id).first()
+        if user is None:
+            return error_response('用户不存在', ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+
+        username = payload.get('username')
+        if User.objects.filter(username__iexact=username).exclude(id=user.id).exists():
+            return error_response('用户名已存在', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+        user.username = username
+        user.email = payload.get('email') or ''
+        user.is_active = bool(payload.get('is_active'))
+        _apply_system_manage_user_password(user, payload.get('password'))
+        user.save()
+    except Exception as exc:
+        logger.exception('update system manage user failed: %s', exc)
+        return error_response('更新用户失败，请检查数据库连接', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    return success_response(_serialize_system_manage_user_row(user), '更新成功')
+
+
+@swagger_auto_schema(
+    method='delete',
+    operation_description='系统设置-删除用户（auth_user）',
+    responses={200: '删除成功', 404: '用户不存在', 401: '未认证'}
+)
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def delete_system_manage_user(request, user_id):
+    try:
+        user = User.objects.filter(id=user_id).first()
+        if user is None:
+            return error_response('用户不存在', ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+        if request.user and request.user.id == user.id:
+            return error_response('不允许删除当前登录用户', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+        user.delete()
+    except Exception as exc:
+        logger.exception('delete system manage user failed: %s', exc)
+        return error_response('删除用户失败，请检查数据库连接', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    return success_response(True, '删除成功')
 
 
 @swagger_auto_schema(

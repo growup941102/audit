@@ -31,6 +31,11 @@ urlpatterns = [
         name='get_data_schedule_select_data'
     ),
     path(
+        'data-schedule/tasks/actions/',
+        views.operate_data_schedule_tasks,
+        name='operate_data_schedule_tasks'
+    ),
+    path(
         'data-schedule/tasks/',
         views.get_data_schedule_tasks,
         name='get_data_schedule_tasks'
@@ -108,6 +113,10 @@ urlpatterns = [
     path('system-manage/website-settings/upload/', views.upload_website_image, name='upload_website_image'),
     path('system-manage/website-settings/', views.get_website_settings, name='get_website_settings'),
     path('system-manage/website-settings/update/', views.update_website_settings, name='update_website_settings'),
+    path('system-manage/users/', views.get_system_manage_users, name='get_system_manage_users'),
+    path('system-manage/users/create/', views.create_system_manage_user, name='create_system_manage_user'),
+    path('system-manage/users/<int:user_id>/update/', views.update_system_manage_user, name='update_system_manage_user'),
+    path('system-manage/users/<int:user_id>/delete/', views.delete_system_manage_user, name='delete_system_manage_user'),
     path('system-manage/website-brand-settings/', views.get_website_brand_settings, name='get_website_brand_settings'),
     path(
         'system-manage/website-brand-settings/update/',
@@ -126,6 +135,7 @@ urlpatterns = [
     path('systemManage/uploadWebsiteAsset', views.upload_website_image, name='upload_website_image_legacy'),
     path('systemManage/getWebsiteSettings', views.get_website_settings, name='get_website_settings_legacy'),
     path('systemManage/updateWebsiteSettings', views.update_website_settings, name='update_website_settings_legacy'),
+    path('systemManage/getUserList', views.get_system_manage_users, name='get_user_list_legacy'),
     path('systemManage/getWebsiteBrandSettings', views.get_website_brand_settings, name='get_website_brand_settings_legacy'),
     path(
         'systemManage/updateWebsiteBrandSettings',

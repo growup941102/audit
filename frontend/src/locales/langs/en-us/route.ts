@@ -36,6 +36,7 @@ const route: App.I18n.Schema['translation']['route'] = {
   '(base)_projects_[pid]_edit': 'Multi-level Dynamic Route Edit',
   '(base)_projects_[pid]_edit_[id]': 'Multi-level Dynamic Route Edit Details',
   '(base)_system-settings': 'System Settings',
+  '(base)_system-settings_user-manage': 'User Manage',
   '(base)_system-settings_watermark-settings': 'Watermark Settings',
   '(base)_system-settings_website-settings': 'Website Settings',
   '(base)_user-center': 'User Center',

@@ -36,6 +36,7 @@ const route: App.I18n.Schema['translation']['route'] = {
   '(base)_projects_[pid]_edit': '多级动态路由编辑',
   '(base)_projects_[pid]_edit_[id]': '多级动态路由编辑详情',
   '(base)_system-settings': '系统设置',
+  '(base)_system-settings_user-manage': '用户管理',
   '(base)_system-settings_watermark-settings': '水印设置',
   '(base)_system-settings_website-settings': '网站设置',
   '(base)_user-center': '个人中心',

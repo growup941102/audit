@@ -12,13 +12,14 @@
 
 ## 2. 目标
 - 核心目标：实现数据调度详情的行业化真实查询（SW/JS），并提供任务信息 detail 接口。
+- 核心链路：`taskId -> file_prepare_project_id + industry -> c_r_cm_kb_project_relation.project_id(kb_project_id) -> SW/JS 业务表`。
 - 预期价值：保证详情展示与行业库表一致，支持关键字段下钻核验。
 
 ## 3. 范围
 ### 本次范围
 - 新增任务详情接口（detail）。
-- `fields` 接口按 industry 分流读取真实表并去重输出。
-- `drilldown` 接口按行业规则查真实表。
+- `fields` 接口按 industry 分流读取真实表并去重输出（先经 relation 映射层）。
+- `drilldown` 接口按行业规则查真实表（先经 relation 映射层）。
 - 前端详情页任务信息区改用新 detail 接口。
 
 ### 不在本次范围
@@ -30,6 +31,9 @@
 
 ## 5. 功能需求
 - [x] 需求 1：新增 `GET /api/data-schedule/tasks/{taskId}/detail/`。
+- [x] 需求 1.1：新增项目 ID 映射层
+  - 使用 `c_r_cm_kb_project_relation.file_prepare_project_id = 当前任务project_id` 查映射；
+  - 使用映射得到的 `c_r_cm_kb_project_relation.project_id` 作为 SW/JS 业务表查询 project_id。
 - [x] 需求 2：SW 行业读取
   - `c_r_cm_engineering_sw_water_affairs_project_info`
   - `c_r_cm_engineering_sw_water_affairs_prj_section`
@@ -54,7 +58,7 @@
 ## 7. 数据与接口影响
 - 前端影响：详情页 summary 数据来源改为 detail 接口。
 - 后端影响：新增 detail 接口，重做 fields/drilldown 数据来源。
-- 数据库影响：只读查询行业业务表，无写入。
+- 数据库影响：只读查询关系表 `c_r_cm_kb_project_relation` + 行业业务表，无写入。
 - 第三方/MCP 影响：无。
 
 ## 8. 交互与界面说明
@@ -63,6 +67,7 @@
 
 ## 9. 验收标准
 - [ ] SW/JS 两类项目可正确返回行业字段。
+- [ ] 可通过 `file_prepare_project_id -> kb_project_id` 映射正确命中 SW/JS 业务表。
 - [ ] 字段名称优先使用列注释。
 - [ ] 去重后字段列表无重复脏数据。
 - [ ] 指定“查看”字段可打开下钻并返回真实表数据。
@@ -70,6 +75,7 @@
 
 ## 10. 风险与疑问
 - 风险：业务表字段命名可能存在环境差异（如 agent_id / prj_section_id）。
+- 风险：`c_r_cm_kb_project_relation` 若不存在映射记录，会导致行业数据无法命中，需要空结果兜底。
 - 疑问：若“招标代理机构ID”注释不一致，是否以列名 `agent_id` 为准（本次按该策略兜底）。
 
 ## 11. 确认关卡

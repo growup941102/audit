@@ -31,6 +31,41 @@ export function fetchGetUserList(params?: Api.SystemManage.UserSearchParams) {
   });
 }
 
+/** get auth user list */
+export function fetchGetSystemUserList(params?: Api.SystemManage.AuthUserSearchParams) {
+  return request<Api.SystemManage.AuthUserList>({
+    method: 'get',
+    params,
+    url: SYSTEM_MANAGE_URLS.GET_SYSTEM_USER_LIST
+  });
+}
+
+/** create auth user */
+export function fetchCreateSystemUser(data: Api.SystemManage.AuthUserOperateParams) {
+  return request<Api.SystemManage.AuthUser>({
+    data,
+    method: 'post',
+    url: SYSTEM_MANAGE_URLS.CREATE_SYSTEM_USER
+  });
+}
+
+/** update auth user */
+export function fetchUpdateSystemUser(userId: number, data: Api.SystemManage.AuthUserOperateParams) {
+  return request<Api.SystemManage.AuthUser>({
+    data,
+    method: 'put',
+    url: SYSTEM_MANAGE_URLS.UPDATE_SYSTEM_USER(userId)
+  });
+}
+
+/** delete auth user */
+export function fetchDeleteSystemUser(userId: number) {
+  return request<boolean>({
+    method: 'delete',
+    url: SYSTEM_MANAGE_URLS.DELETE_SYSTEM_USER(userId)
+  });
+}
+
 /** get menu list */
 export function fetchGetMenuList() {
   return request<Api.SystemManage.MenuList>({

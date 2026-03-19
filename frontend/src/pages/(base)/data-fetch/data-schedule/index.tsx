@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { TableHeaderOperation, useTable, useTableOperate } from '@/features/table';
+import { operateDataScheduleTasks } from '@/service/api';
 
 import ScheduleCreateView from './modules/ScheduleCreateView';
 import ScheduleDetailView from './modules/ScheduleDetailView';
@@ -186,7 +187,9 @@ const DataSchedule = () => {
                   }
 
                   if (key === 'delete') {
-                    window.$message?.info(t('page.dataSchedule.deleteTodo'));
+                    handleTaskAction('delete', [record.taskId]).catch(error => {
+                      window.$message?.error(error instanceof Error ? error.message : t('common.error'));
+                    });
                   }
                 }
               }}
@@ -201,7 +204,8 @@ const DataSchedule = () => {
     ],
     pagination: {
       showQuickJumper: true
-    }
+    },
+    rowKey: 'taskId'
   });
 
   useEffect(() => {
@@ -222,7 +226,7 @@ const DataSchedule = () => {
     searchProps.reset();
   }
 
-  const { checkedRowKeys, onBatchDeleted, rowSelection } = useTableOperate(data, run, async () => {
+  const { checkedRowKeys, onSelectChange, rowSelection } = useTableOperate(data, run, async () => {
     // placeholder
   });
 
@@ -242,12 +246,72 @@ const DataSchedule = () => {
     window.$message?.info('暂未接入后端接口，当前仅为界面展示');
   }
 
+  function getSelectedTaskIds() {
+    return checkedRowKeys.map(item => String(item)).filter(Boolean);
+  }
+
+  async function handleTaskAction(action: Api.DataSchedule.TaskAction, taskIds?: string[]) {
+    const normalizedTaskIds = action === 'refresh' ? [] : taskIds || [];
+    const result = await operateDataScheduleTasks({
+      action,
+      taskIds: normalizedTaskIds
+    });
+
+    if (result.invalidTaskIds?.length) {
+      window.$message?.warning(`部分任务无效或已不存在：${result.invalidTaskIds.length} 条`);
+    }
+
+    if (action === 'refresh') {
+      window.$message?.success(t('common.refresh'));
+    } else if (action === 'delete') {
+      window.$message?.success(t('common.deleteSuccess'));
+    } else {
+      window.$message?.success(t('common.updateSuccess'));
+    }
+
+    await run(false);
+    if (action !== 'refresh') {
+      onSelectChange([]);
+    }
+  }
+
+  async function handleBatchAction(action: Api.DataSchedule.TaskAction) {
+    const taskIds = getSelectedTaskIds();
+    if (!taskIds.length) return;
+    await handleTaskAction(action, taskIds);
+  }
+
+  async function handleBatchDelete() {
+    await handleBatchAction('delete');
+  }
+
+  async function handleRefresh() {
+    await handleTaskAction('refresh');
+  }
+
+  function triggerRefresh() {
+    handleRefresh().catch(error => {
+      window.$message?.error(error instanceof Error ? error.message : t('common.error'));
+    });
+  }
+
+  function triggerBatchDelete() {
+    handleBatchDelete().catch(error => {
+      window.$message?.error(error instanceof Error ? error.message : t('common.error'));
+    });
+  }
+
   const batchButtons = (
     <ASpace size={8}>
       <AButton
         disabled={checkedRowKeys.length === 0}
         icon={<IconIcRoundReplay className="text-icon" />}
         size="small"
+        onClick={() => {
+          handleBatchAction('reExecute').catch(error => {
+            window.$message?.error(error instanceof Error ? error.message : t('common.error'));
+          });
+        }}
       >
         {t('page.dataSchedule.reExecute')}
       </AButton>
@@ -255,6 +319,11 @@ const DataSchedule = () => {
         disabled={checkedRowKeys.length === 0}
         icon={<IconIcRoundPlayArrow className="text-icon" />}
         size="small"
+        onClick={() => {
+          handleBatchAction('continue').catch(error => {
+            window.$message?.error(error instanceof Error ? error.message : t('common.error'));
+          });
+        }}
       >
         {t('page.dataSchedule.continue')}
       </AButton>
@@ -262,6 +331,11 @@ const DataSchedule = () => {
         disabled={checkedRowKeys.length === 0}
         icon={<IconIcRoundPause className="text-icon" />}
         size="small"
+        onClick={() => {
+          handleBatchAction('pause').catch(error => {
+            window.$message?.error(error instanceof Error ? error.message : t('common.error'));
+          });
+        }}
       >
         {t('page.dataSchedule.pause')}
       </AButton>
@@ -269,6 +343,11 @@ const DataSchedule = () => {
         disabled={checkedRowKeys.length === 0}
         icon={<IconIcRoundStop className="text-icon" />}
         size="small"
+        onClick={() => {
+          handleBatchAction('stop').catch(error => {
+            window.$message?.error(error instanceof Error ? error.message : t('common.error'));
+          });
+        }}
       >
         {t('page.dataSchedule.stop')}
       </AButton>
@@ -325,9 +404,9 @@ const DataSchedule = () => {
             disabledDelete={checkedRowKeys.length === 0}
             loading={tableProps.loading}
             prefix={batchButtons}
-            refresh={run}
             setColumnChecks={setColumnChecks}
-            onDelete={onBatchDeleted}
+            onDelete={triggerBatchDelete}
+            refresh={triggerRefresh}
           />
         }
       >

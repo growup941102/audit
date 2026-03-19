@@ -11,6 +11,7 @@
 - 后端方案：
   - 新增 `GET /api/data-schedule/tasks/`；
   - 复用与任务状况同源的核心表做聚合查询；
+  - 基准项目集合采用“有效项目 + 文件准备存在 + 项目级队列存在”三重门禁；
   - 按查询参数动态拼接筛选条件。
 - 数据流转：
   1. 页面提交搜索条件；
@@ -99,16 +100,41 @@
 - `c_r_cm_task_item_queue`：任务队列快照（最新状态、更新时间、任务标识）
 
 ### 6.2 聚合思路
-1. 先按项目聚合文件统计，得到进度与失败/成功分布。
-2. 再取每个项目最新任务快照（同 `summary/ranking` 现有口径）。
-3. 组装列表记录：
+1. 先确定基准项目集合（只展示满足全部条件的项目）：
+   - `c_r_cm_project.industry IS NOT NULL AND TRIM(industry) != ''`
+   - `EXISTS c_r_cm_file_prepare(project_id = p.project_id)`
+   - `EXISTS c_r_cm_task_item_queue(project_id = p.project_id AND file_id LIKE 'PROJECT:%')`
+2. 按基准集合聚合文件统计，得到进度与失败/成功分布。
+3. 再取每个项目最新任务快照（同 `summary/ranking` 现有口径，限定项目级队列）。
+4. 组装列表记录：
    - `taskId`：最新任务 `resource_id`（或项目级任务标识）
    - `taskStatus`：状态映射结果
    - `progress`：建议按 `step3SuccessFiles / nonDraftFiles * 100`（无非草稿时 0）
    - `completeTime`：终态任务更新时间（无则 `null`）
-4. 最后应用筛选与分页。
+5. 最后应用筛选与分页。
 
-### 6.3 筛选规则
+### 6.3 基准集合 SQL 草案（只读）
+```sql
+SELECT p.project_id
+FROM c_r_cm_project p
+WHERE p.project_id IS NOT NULL
+  AND p.project_id <> ''
+  AND p.industry IS NOT NULL
+  AND TRIM(p.industry) <> ''
+  AND EXISTS (
+    SELECT 1
+    FROM c_r_cm_file_prepare f
+    WHERE f.project_id = p.project_id
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM c_r_cm_task_item_queue q
+    WHERE q.project_id = p.project_id
+      AND q.file_id LIKE 'PROJECT:%'
+  );
+```
+
+### 6.4 筛选规则
 - `projectName`：`LIKE %keyword%`
 - `taskStatus`：映射后状态 `IN (...)`
 - `creator`：创建人 `IN (...)`
@@ -136,7 +162,9 @@
 - 状态映射测试：覆盖 running/success/pending/failed/paused/stopped。
 - 分页测试：total 与 records 数量一致。
 - 与数据概览口径对比：同时间窗口下总量趋势一致。
+- 基准门禁测试：无 `file_prepare` 或无项目级队列的数据不应出现在列表。
 
 ## 11. 风险
 - 真实库字段差异（如 `creator/create_time`）可能导致实现期需调整 SQL 字段映射。
 - `progress` 的业务口径若需改为“匹配度”独立算法，需补充计算来源。
+- 若仍以项目表全量起查并做外连接，容易把无队列/无文件的项目带入结果，需强制基准集合先过滤。

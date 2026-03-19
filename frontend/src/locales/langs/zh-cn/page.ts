@@ -375,6 +375,34 @@ const page: App.I18n.Schema['translation']['page'] = {
       text: '水印文字'
     },
     websiteName: '网站名称'
+  },
+  systemSettings: {
+    userManage: {
+      addUser: '新增用户',
+      batchDeleteFailed: '删除失败 {{count}} 个用户',
+      batchDeleteSuccess: '已删除 {{count}} 个用户',
+      createTime: '创建时间',
+      editUser: '编辑用户',
+      form: {
+        confirmPassword: '请输入确认密码',
+        invalidEmail: '邮箱格式不正确',
+        password: '请输入密码',
+        passwordEdit: '留空表示不修改；如需修改请输入新密码',
+        passwordFirst: '请先输入密码',
+        passwordRule: '密码需为6-18位，且包含字母和数字，可包含@',
+        passwordNotMatch: '两次密码输入不一致',
+        userEmail: '请输入邮箱',
+        userName: '请输入用户名',
+        userStatus: '请选择是否可用'
+      },
+      title: '用户管理',
+      updateTime: '更新时间',
+      userConfirmPassword: '确认密码',
+      userEmail: '邮箱',
+      userName: '用户名',
+      userPassword: '密码',
+      userStatus: '状态'
+    }
   }
 };
 
