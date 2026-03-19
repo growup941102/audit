@@ -7,6 +7,7 @@ import io
 import json
 import logging
 from pathlib import Path
+import re
 import secrets
 import string
 import time
@@ -21,7 +22,7 @@ from django.core.cache import cache
 from django.contrib.auth.password_validation import validate_password
 from django.core import signing
 from django.core.exceptions import ValidationError
-from django.db import connection, transaction
+from django.db import DataError, IntegrityError, OperationalError, connection, transaction
 from django.http import HttpResponse
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
@@ -198,10 +199,10 @@ DATA_SCHEDULE_DRILLDOWN_ROW_VALUE_MAX_LENGTH = 2000
 DATA_SCHEDULE_EXPORT_LOG_DIR = Path(__file__).resolve().parents[1] / 'logs'
 DATA_SCHEDULE_EXPORT_LOG_FILE = DATA_SCHEDULE_EXPORT_LOG_DIR / 'data_schedule_export.log'
 API_FAILURE_LOG_FILE = DATA_SCHEDULE_EXPORT_LOG_DIR / 'api_failure.log'
-DATA_SCHEDULE_FIELD_OVERRIDE_STORE = {}
 DATA_SCHEDULE_REAL_SOURCE_ERROR = '数据调度真实数据源未接入，mock 兜底数据已移除'
 _TABLE_COLUMN_CACHE = {}
 _TABLE_COLUMN_META_CACHE = {}
+_TABLE_REQUIRED_INSERT_COLUMNS_CACHE = {}
 DATA_SCHEDULE_TASK_CREATOR_COLUMN_CANDIDATES = (
     'creator',
     'created_by',
@@ -260,12 +261,41 @@ DATA_SCHEDULE_DETAIL_EXCLUDED_COLUMN_SET = {
     'updated_at',
     'updated_time',
 }
+DATA_SCHEDULE_DETAIL_NON_EDITABLE_COLUMN_SET = {
+    'agent_id',
+    'id',
+    'pk',
+    'project_id',
+    'prj_section_id',
+}
+DATA_SCHEDULE_DRILLDOWN_NON_EDITABLE_COLUMN_SET = {
+    'agent_id',
+    'id',
+    'pk',
+    'project_id',
+    'prj_section_id',
+    'row_id',
+    'record_id',
+    'section_id',
+}
+DATA_SCHEDULE_DETAIL_ROW_LOCATOR_COLUMN_PRIORITY = (
+    'id',
+    'pk',
+    'row_id',
+    'record_id',
+    'project_id',
+    'prj_section_id',
+    'section_id',
+    'agent_id',
+)
 DATA_SCHEDULE_SELECT_DATA_ROOT = '/home/tj'
 DATA_SCHEDULE_SELECT_DATA_CATALOG_ID = 'home_tj'
 DATA_SCHEDULE_PROJECT_ROOT_PATH_COLUMN_CANDIDATES = (
     'root_path',
     'rootPath',
 )
+DATA_QUERY_DEFAULT_SIZE = 10
+DATA_QUERY_MAX_SIZE = 50
 
 PROJECT_STATUS_RUNNING_TASK_SET = {'RUNNING', 'CLAIMED', 'LOCKED'}
 PROJECT_STATUS_FAILED_TASK_SET = {'FAILED', 'CANCELLED', 'CANCEL'}
@@ -531,6 +561,236 @@ def _build_data_schedule_select_data_payload():
     }
 
 
+def _fetch_data_query_industry_rows():
+    if not _table_exists('c_r_cm_project'):
+        return []
+
+    valid_project_where_clause = _build_valid_project_where_clause('p')
+    sql = (
+        "SELECT DISTINCT p.industry AS industry "
+        "FROM c_r_cm_project p "
+        f"WHERE {valid_project_where_clause} "
+        "ORDER BY UPPER(TRIM(p.industry)) ASC"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
+        return _dictfetchall(cursor)
+
+
+def _build_data_query_industry_options():
+    rows = _fetch_data_query_industry_rows()
+    industry_set = set()
+    for row in rows:
+        industry = _normalize_data_schedule_detail_industry(row.get('industry'))
+        if not industry:
+            continue
+        industry_set.add(industry)
+
+    options = []
+    for industry in sorted(industry_set):
+        options.append({'label': industry, 'value': industry})
+    return options
+
+
+def _parse_data_query_industry_pivot_filters(request):
+    query_params = getattr(request, 'query_params', None)
+    if query_params is None:
+        query_params = getattr(request, 'GET', {})
+
+    raw_industry = query_params.get('industry')
+    if not _to_str(raw_industry):
+        return None, 'industry 参数不能为空'
+
+    industry = _normalize_data_schedule_detail_industry(raw_industry)
+    if not industry:
+        return None, 'industry 参数无效，仅支持 SW/JS'
+
+    current = _parse_positive_int(query_params.get('current'), default=1, max_value=100000)
+    size = _parse_positive_int(
+        query_params.get('size'),
+        default=DATA_QUERY_DEFAULT_SIZE,
+        max_value=DATA_QUERY_MAX_SIZE
+    )
+    project_name = _to_str(query_params.get('projectName'))
+
+    return {
+        'current': current,
+        'industry': industry,
+        'projectName': project_name,
+        'size': size,
+    }, ''
+
+
+def _fetch_data_query_project_relation_map(file_prepare_project_ids):
+    normalized_project_ids = [_to_str(item) for item in (file_prepare_project_ids or []) if _to_str(item)]
+    if not normalized_project_ids:
+        return {}
+    if not _table_exists('c_r_cm_kb_project_relation'):
+        return {}
+
+    where_clause, params = _build_data_schedule_where_with_values('file_prepare_project_id', normalized_project_ids)
+    if where_clause is None:
+        return {}
+
+    order_parts = []
+    for column_name in ('update_time', 'create_time', 'id'):
+        if _table_has_column('c_r_cm_kb_project_relation', column_name):
+            order_parts.append(f'{column_name} DESC')
+    order_sql = f" ORDER BY {', '.join(order_parts)}" if order_parts else ''
+
+    sql = (
+        "SELECT file_prepare_project_id AS filePrepareProjectId, "
+        "project_id AS projectId "
+        "FROM c_r_cm_kb_project_relation "
+        f"WHERE {where_clause} "
+        f"{order_sql}"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params)
+        rows = _dictfetchall(cursor)
+
+    relation_map = {}
+    for row in rows:
+        file_prepare_project_id = _to_str(row.get('filePrepareProjectId'))
+        kb_project_id = _to_str(row.get('projectId'))
+        if not file_prepare_project_id or not kb_project_id:
+            continue
+        if file_prepare_project_id in relation_map:
+            continue
+        relation_map[file_prepare_project_id] = kb_project_id
+    return relation_map
+
+
+def _fetch_data_query_projects_by_industry(industry, project_name=''):
+    normalized_industry = _normalize_data_schedule_detail_industry(industry)
+    if not normalized_industry:
+        return []
+
+    valid_project_where_clause = _build_valid_project_where_clause('p')
+    where_parts = [
+        valid_project_where_clause,
+        "UPPER(TRIM(p.industry)) = %s",
+    ]
+    params = [normalized_industry]
+
+    normalized_project_name = _to_str(project_name)
+    if normalized_project_name:
+        where_parts.append("p.project_name LIKE %s")
+        params.append(f'%{normalized_project_name}%')
+
+    sql = (
+        "SELECT p.project_id AS projectId, "
+        "p.project_name AS projectName "
+        "FROM c_r_cm_project p "
+        f"WHERE {' AND '.join(where_parts)} "
+        "ORDER BY p.project_name ASC, p.project_id ASC"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params)
+        rows = _dictfetchall(cursor)
+
+    file_prepare_project_ids = [_to_str(item.get('projectId')) for item in rows if _to_str(item.get('projectId'))]
+    relation_map = _fetch_data_query_project_relation_map(file_prepare_project_ids)
+
+    projects = []
+    for row in rows:
+        file_prepare_project_id = _to_str(row.get('projectId'))
+        if not file_prepare_project_id:
+            continue
+
+        projects.append({
+            'kbProjectId': relation_map.get(file_prepare_project_id, ''),
+            'projectId': file_prepare_project_id,
+            'projectName': _to_str(row.get('projectName')) or file_prepare_project_id,
+        })
+    return projects
+
+
+def _build_data_query_project_field_value_map(project_row, industry):
+    kb_project_id = _to_str((project_row or {}).get('kbProjectId'))
+    if not kb_project_id:
+        return {}
+
+    config = _get_data_schedule_industry_table_config(industry)
+    if not config:
+        return {}
+
+    field_rows = _build_data_schedule_field_rows({
+        'config': config,
+        'projectId': kb_project_id,
+    })
+
+    field_name_order = []
+    field_values_map = {}
+    for item in field_rows:
+        field_name = _to_str(item.get('fieldName'))
+        if not field_name:
+            continue
+        if field_name not in field_values_map:
+            field_name_order.append(field_name)
+            field_values_map[field_name] = []
+
+        field_value = _to_str(item.get('fieldValueDisplay')) or '--'
+        if _is_blank_text_value(field_value):
+            continue
+        if field_value in field_values_map[field_name]:
+            continue
+        field_values_map[field_name].append(field_value)
+
+    flattened = {}
+    for field_name in field_name_order:
+        values = field_values_map.get(field_name) or []
+        flattened[field_name] = '；'.join(values) if values else '--'
+    return flattened
+
+
+def _build_data_query_industry_pivot_payload(filters):
+    current = _to_int((filters or {}).get('current'), default=1)
+    size = _to_int((filters or {}).get('size'), default=DATA_QUERY_DEFAULT_SIZE)
+    industry = _to_str((filters or {}).get('industry'))
+    project_name = _to_str((filters or {}).get('projectName'))
+
+    all_projects = _fetch_data_query_projects_by_industry(industry, project_name)
+    total = len(all_projects)
+    start_idx = max(0, (current - 1) * size)
+    end_idx = start_idx + size
+    paged_projects = all_projects[start_idx:end_idx]
+
+    dynamic_field_keys = []
+    dynamic_field_set = set()
+    records = []
+    for project_row in paged_projects:
+        project_field_value_map = _build_data_query_project_field_value_map(project_row, industry)
+        record = {
+            'projectId': _to_str(project_row.get('projectId')),
+            'projectName': _to_str(project_row.get('projectName')) or _to_str(project_row.get('projectId')),
+        }
+
+        for field_name, field_value in project_field_value_map.items():
+            if field_name not in dynamic_field_set:
+                dynamic_field_set.add(field_name)
+                dynamic_field_keys.append(field_name)
+            record[field_name] = field_value if not _is_blank_text_value(field_value) else '--'
+
+        records.append(record)
+
+    for record in records:
+        for field_name in dynamic_field_keys:
+            if field_name not in record:
+                record[field_name] = '--'
+
+    columns = [{'fixed': 'left', 'key': 'projectName', 'title': '项目名称'}]
+    columns.extend([{'key': field_name, 'title': field_name} for field_name in dynamic_field_keys])
+
+    return {
+        'columns': columns,
+        'current': current,
+        'records': records,
+        'size': size,
+        'total': total,
+    }
+
+
 def _table_exists(table_name):
     return bool(_get_table_columns(table_name))
 
@@ -585,6 +845,56 @@ def _get_table_column_meta(table_name):
         })
     _TABLE_COLUMN_META_CACHE[table_name] = fallback_meta
     return fallback_meta
+
+
+def _get_table_required_insert_columns(table_name):
+    cached = _TABLE_REQUIRED_INSERT_COLUMNS_CACHE.get(table_name)
+    if cached is not None:
+        return cached
+
+    if not _table_exists(table_name):
+        _TABLE_REQUIRED_INSERT_COLUMNS_CACHE[table_name] = []
+        return []
+
+    rows = []
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT COLUMN_NAME AS columnName, "
+                "COALESCE(IS_NULLABLE, 'YES') AS isNullable, "
+                "COLUMN_DEFAULT AS columnDefault, "
+                "COALESCE(EXTRA, '') AS extraInfo "
+                "FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s "
+                "ORDER BY ORDINAL_POSITION ASC",
+                [table_name]
+            )
+            rows = _dictfetchall(cursor)
+    except Exception as exc:
+        logger.warning('query table required insert columns failed, table=%s, error=%s', table_name, exc)
+
+    required_columns = []
+    for row in rows:
+        column_name = _to_str(row.get('columnName'))
+        if not column_name:
+            continue
+
+        is_nullable = _to_str(row.get('isNullable')).upper()
+        has_default = row.get('columnDefault') is not None
+        extra_info = _to_str(row.get('extraInfo')).lower()
+
+        if is_nullable != 'NO':
+            continue
+        if has_default:
+            continue
+        if 'auto_increment' in extra_info:
+            continue
+        if 'generated' in extra_info:
+            continue
+        required_columns.append(column_name)
+
+    _TABLE_REQUIRED_INSERT_COLUMNS_CACHE[table_name] = required_columns
+    return required_columns
 
 
 def _is_blank_text_value(value):
@@ -728,7 +1038,18 @@ def _fetch_data_schedule_table_records(table_name, where_parts=None, params=None
 
 def _normalize_data_schedule_detail_rows(table_name, rows):
     column_meta = _get_table_column_meta(table_name)
-    available_columns = {item.get('normalizedName') for item in column_meta}
+    available_columns = {
+        _to_str(item.get('normalizedName')).lower()
+        for item in column_meta
+        if _to_str(item.get('normalizedName'))
+    }
+    normalized_to_column_name = {}
+    for item in column_meta:
+        normalized_name = _to_str(item.get('normalizedName')).lower()
+        column_name = _to_str(item.get('name'))
+        if normalized_name and column_name and normalized_name not in normalized_to_column_name:
+            normalized_to_column_name[normalized_name] = column_name
+
     included_meta = [
         item
         for item in column_meta
@@ -748,6 +1069,7 @@ def _normalize_data_schedule_detail_rows(table_name, rows):
         if not _is_blank_text_value(section_id_value):
             section_ids.add(_to_str(section_id_value))
 
+        source_locator = _build_data_schedule_row_locator(normalized_to_column_name, row_data)
         for meta in included_meta:
             column_name = _to_str(meta.get('name'))
             normalized_name = _to_str(meta.get('normalizedName')).lower()
@@ -759,16 +1081,136 @@ def _normalize_data_schedule_detail_rows(table_name, rows):
 
             value_display = _format_data_schedule_field_value(raw_value)
             status_value = DATA_SCHEDULE_SCOPE_MISSING if _is_blank_text_value(value_display) else DATA_SCHEDULE_SCOPE_COMPLETE
+            can_edit = (
+                bool(source_locator)
+                and _is_data_schedule_detail_column_editable(normalized_name)
+            )
             field_rows.append({
                 'canDrilldown': False,
-                'canEdit': False,
-                'fieldKey': f'{table_name}.{column_name}.{row_index}',
+                'canEdit': can_edit,
+                'fieldKey': _build_data_schedule_field_key(table_name, column_name, row_index, source_locator),
                 'fieldName': field_name or column_name,
                 'fieldValueDisplay': value_display,
+                'sourceColumn': column_name,
+                'sourceLocator': source_locator,
+                'sourceTable': table_name,
                 'status': status_value,
             })
 
     return field_rows, agent_ids, section_ids
+
+
+def _build_data_schedule_row_locator(normalized_to_column_name, row_data):
+    locator = []
+    used_columns = set()
+    has_strong_unique_key = False
+
+    for normalized_name in DATA_SCHEDULE_DETAIL_ROW_LOCATOR_COLUMN_PRIORITY:
+        column_name = _to_str((normalized_to_column_name or {}).get(normalized_name))
+        if not column_name or column_name in used_columns:
+            continue
+
+        raw_value = (row_data or {}).get(column_name)
+        if _is_blank_text_value(raw_value):
+            continue
+
+        locator.append({'column': column_name, 'value': raw_value})
+        used_columns.add(column_name)
+        if normalized_name in {'id', 'pk', 'row_id', 'record_id'}:
+            has_strong_unique_key = True
+
+    if has_strong_unique_key:
+        return locator
+
+    for normalized_name in sorted((normalized_to_column_name or {}).keys()):
+        if not normalized_name.endswith('_id'):
+            continue
+        column_name = _to_str((normalized_to_column_name or {}).get(normalized_name))
+        if not column_name or column_name in used_columns:
+            continue
+
+        raw_value = (row_data or {}).get(column_name)
+        if _is_blank_text_value(raw_value):
+            continue
+
+        locator.append({'column': column_name, 'value': raw_value})
+        used_columns.add(column_name)
+
+    for normalized_name in sorted((normalized_to_column_name or {}).keys()):
+        column_name = _to_str((normalized_to_column_name or {}).get(normalized_name))
+        if not column_name or column_name in used_columns:
+            continue
+
+        raw_value = (row_data or {}).get(column_name)
+        if _is_blank_text_value(raw_value):
+            continue
+
+        locator.append({'column': column_name, 'value': raw_value})
+        used_columns.add(column_name)
+
+    return locator
+
+
+def _build_data_schedule_field_key(table_name, column_name, row_index, source_locator):
+    normalized_table = _to_str(table_name)
+    normalized_column = _to_str(column_name)
+    if not normalized_table or not normalized_column:
+        return ''
+
+    normalized_locator = []
+    for locator_item in source_locator or []:
+        if not isinstance(locator_item, dict):
+            continue
+        locator_column = _to_str(locator_item.get('column'))
+        locator_value = locator_item.get('value')
+        if not locator_column or _is_blank_text_value(locator_value):
+            continue
+        normalized_locator.append({
+            'column': locator_column,
+            'value': str(locator_value),
+        })
+    if normalized_locator:
+        locator_text = json.dumps(normalized_locator, ensure_ascii=False, separators=(',', ':'))
+        digest = hashlib.md5(locator_text.encode('utf-8')).hexdigest()[:12]
+        return f'{normalized_table}.{normalized_column}.{digest}'
+
+    return f'{normalized_table}.{normalized_column}.{row_index}'
+
+
+def _is_data_schedule_detail_column_editable(normalized_column_name):
+    normalized = _to_str(normalized_column_name).lower()
+    if not normalized:
+        return False
+    if normalized in DATA_SCHEDULE_DETAIL_EXCLUDED_COLUMN_SET:
+        return False
+    if normalized in DATA_SCHEDULE_DETAIL_NON_EDITABLE_COLUMN_SET:
+        return False
+    if normalized.endswith('_id'):
+        return False
+    return True
+
+
+def _is_data_schedule_drilldown_column_editable(normalized_column_name):
+    normalized = _to_str(normalized_column_name).lower()
+    if not normalized:
+        return False
+    if normalized in DATA_SCHEDULE_DETAIL_EXCLUDED_COLUMN_SET:
+        return False
+    if normalized in DATA_SCHEDULE_DRILLDOWN_NON_EDITABLE_COLUMN_SET:
+        return False
+    return True
+
+
+def _is_safe_sql_identifier(name):
+    normalized = _to_str(name)
+    if not normalized:
+        return False
+    if not (normalized[0].isalpha() or normalized[0] == '_'):
+        return False
+    for char in normalized:
+        if not (char.isalnum() or char == '_'):
+            return False
+    return True
 
 
 def _to_int(value, default=0):
@@ -2367,7 +2809,10 @@ def _build_data_schedule_drilldown_from_table(table_name, title, context, prefer
         return {
             'actions': {'canCreate': False, 'canDelete': False, 'canEdit': False},
             'columns': [],
+            'defaultInsertValues': {},
+            'editableColumns': [],
             'records': [],
+            'sourceTable': table_name,
             'title': title,
         }
 
@@ -2383,7 +2828,10 @@ def _build_data_schedule_drilldown_from_table(table_name, title, context, prefer
             return {
                 'actions': {'canCreate': False, 'canDelete': False, 'canEdit': False},
                 'columns': [],
+                'defaultInsertValues': {},
+                'editableColumns': [],
                 'records': [],
+                'sourceTable': table_name,
                 'title': title,
             }
         where_parts.append(in_clause)
@@ -2405,28 +2853,72 @@ def _build_data_schedule_drilldown_from_table(table_name, title, context, prefer
         for item in _get_table_column_meta(table_name)
         if item.get('normalizedName') not in DATA_SCHEDULE_DETAIL_EXCLUDED_COLUMN_SET
     ]
-    columns = [
-        {
-            'editable': False,
-            'key': _to_str(item.get('name')),
+    columns = []
+    normalized_to_column_name = {}
+    editable_columns = []
+    for item in column_meta:
+        column_name = _to_str(item.get('name'))
+        if not column_name:
+            continue
+
+        normalized_name = _to_str(item.get('normalizedName')).lower()
+        if normalized_name and normalized_name not in normalized_to_column_name:
+            normalized_to_column_name[normalized_name] = column_name
+
+        editable = _is_data_schedule_drilldown_column_editable(normalized_name)
+        columns.append({
+            'editable': editable,
+            'key': column_name,
             'title': _build_data_schedule_field_name(item),
-        }
-        for item in column_meta
-        if _to_str(item.get('name'))
-    ]
+        })
+        if editable:
+            editable_columns.append(column_name)
 
     records = []
+    writable_rows = 0
     for index, row in enumerate(rows, start=1):
-        normalized = {'id': index}
+        normalized = {
+            '__sourceTable': table_name,
+            'id': index,
+        }
         for column in columns:
             column_key = _to_str(column.get('key'))
             normalized[column_key] = _format_data_schedule_field_value((row or {}).get(column_key))
+        source_locator = _build_data_schedule_row_locator(normalized_to_column_name, row)
+        normalized['__sourceLocator'] = source_locator
+        if source_locator:
+            writable_rows += 1
         records.append(normalized)
 
+    default_insert_values = {}
+    can_create = bool(editable_columns)
+    if _table_has_column(table_name, 'project_id'):
+        if project_id:
+            default_insert_values['project_id'] = project_id
+        else:
+            can_create = False
+    if _table_has_column(table_name, 'prj_section_id'):
+        if len(section_ids) == 1:
+            default_insert_values['prj_section_id'] = section_ids[0]
+        elif section_ids:
+            can_create = False
+    if prefer_agent and _table_has_column(table_name, 'agent_id'):
+        if len(agent_ids) == 1:
+            default_insert_values['agent_id'] = agent_ids[0]
+        elif agent_ids:
+            can_create = False
+
     return {
-        'actions': {'canCreate': False, 'canDelete': False, 'canEdit': False},
+        'actions': {
+            'canCreate': can_create,
+            'canDelete': writable_rows > 0,
+            'canEdit': bool(editable_columns) and writable_rows > 0
+        },
         'columns': columns,
+        'defaultInsertValues': default_insert_values,
+        'editableColumns': editable_columns,
         'records': records,
+        'sourceTable': table_name,
         'title': title,
     }
 
@@ -2475,9 +2967,207 @@ def _get_data_schedule_fields(task_id):
     return _build_data_schedule_detail_bundle(task_id).get('fields') or []
 
 
-def _update_data_schedule_field_value(task_id, field_key, field_value):
-    task_overrides = DATA_SCHEDULE_FIELD_OVERRIDE_STORE.setdefault(task_id, {})
-    task_overrides[field_key] = field_value
+def _normalize_data_schedule_source_locator(source_table, source_locator):
+    normalized_locator = []
+    for locator_item in source_locator:
+        if not isinstance(locator_item, dict):
+            continue
+        locator_column = _to_str(locator_item.get('column'))
+        locator_value = locator_item.get('value')
+        if not locator_column or _is_blank_text_value(locator_value):
+            continue
+        if not _is_safe_sql_identifier(locator_column):
+            raise ValueError('字段数据源不合法')
+        if not _table_has_column(source_table, locator_column):
+            raise ValueError('字段数据源不存在')
+        normalized_locator.append((locator_column, locator_value))
+    if not normalized_locator:
+        raise ValueError('字段缺少可更新的数据源信息')
+    return normalized_locator
+
+
+def _ensure_single_data_schedule_locator_target(source_table, where_sql, locator_params):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"SELECT COUNT(1) FROM `{source_table}` WHERE {where_sql}",
+            locator_params,
+        )
+        count_row = cursor.fetchone() or [0]
+
+    match_count = _to_int(count_row[0], default=0)
+    if match_count <= 0:
+        raise ValueError('更新目标不存在')
+    if match_count > 1:
+        raise ValueError('更新目标不唯一，暂不支持编辑')
+
+
+def _create_data_schedule_drilldown_row_to_db(payload, row_data):
+    source_table = _to_str((payload or {}).get('sourceTable'))
+    editable_columns = [item for item in ((payload or {}).get('editableColumns') or []) if _to_str(item)]
+    default_insert_values = (payload or {}).get('defaultInsertValues') or {}
+
+    if not source_table or not _is_safe_sql_identifier(source_table):
+        raise ValueError('字段数据源不合法')
+    if not _table_exists(source_table):
+        raise ValueError('字段数据源不存在')
+
+    insert_values = {}
+    for key, value in (default_insert_values or {}).items():
+        column_name = _to_str(key)
+        if not column_name:
+            continue
+        if not _is_safe_sql_identifier(column_name):
+            raise ValueError('字段数据源不合法')
+        if not _table_has_column(source_table, column_name):
+            raise ValueError('字段数据源不存在')
+        insert_values[column_name] = value
+
+    for column_name in editable_columns:
+        normalized_column = _to_str(column_name)
+        if not normalized_column:
+            continue
+        if not _is_safe_sql_identifier(normalized_column):
+            raise ValueError('字段数据源不合法')
+        if not _table_has_column(source_table, normalized_column):
+            raise ValueError('字段数据源不存在')
+        if normalized_column in (row_data or {}):
+            insert_values[normalized_column] = (row_data or {}).get(normalized_column)
+
+    if not insert_values:
+        raise ValueError('没有可新增的列')
+
+    insert_columns = list(insert_values.keys())
+    insert_params = [insert_values[item] for item in insert_columns]
+    column_sql = ', '.join([f"`{item}`" for item in insert_columns])
+    placeholder_sql = ', '.join(['%s'] * len(insert_columns))
+    sql = f"INSERT INTO `{source_table}` ({column_sql}) VALUES ({placeholder_sql})"
+
+    with connection.cursor() as cursor:
+        cursor.execute(sql, insert_params)
+
+
+def _build_data_schedule_db_write_error_message(exc, action_name='操作'):
+    normalized_action_name = _to_str(action_name) or '操作'
+    error_message = _to_str(exc).lower()
+
+    if isinstance(exc, IntegrityError):
+        if any(token in error_message for token in ['duplicate', 'unique']):
+            return f'{normalized_action_name}失败：存在重复数据（唯一约束冲突）'
+        if any(token in error_message for token in ['cannot be null', "doesn't have a default value", 'null value']):
+            missing_column = ''
+            missing_column_match = re.search(r"column '([^']+)'", _to_str(exc), flags=re.IGNORECASE)
+            if missing_column_match:
+                missing_column = _to_str(missing_column_match.group(1))
+            if missing_column:
+                return f'{normalized_action_name}失败：必填字段缺失（{missing_column}）'
+            return f'{normalized_action_name}失败：必填字段缺失'
+        return f'{normalized_action_name}失败：字段约束校验未通过'
+
+    if isinstance(exc, DataError):
+        return f'{normalized_action_name}失败：字段值不合法'
+
+    if isinstance(exc, OperationalError):
+        if 'access denied' in error_message:
+            return f'{normalized_action_name}失败：数据库账号认证失败'
+        if 'command denied' in error_message:
+            return f'{normalized_action_name}失败：数据库账号缺少写权限'
+        return f'{normalized_action_name}失败：数据库连接不可用'
+
+    return f'{normalized_action_name}失败，请检查数据库连接'
+
+
+def _update_data_schedule_drilldown_row_to_db(payload, row, row_data):
+    source_table = _to_str((payload or {}).get('sourceTable'))
+    editable_columns = [item for item in ((payload or {}).get('editableColumns') or []) if _to_str(item)]
+    source_locator = (row or {}).get('__sourceLocator') or []
+
+    if not source_table or not _is_safe_sql_identifier(source_table):
+        raise ValueError('字段数据源不合法')
+    if not _table_exists(source_table):
+        raise ValueError('字段数据源不存在')
+    if not editable_columns:
+        raise ValueError('当前字段不支持编辑')
+
+    normalized_locator = _normalize_data_schedule_source_locator(source_table, source_locator)
+    where_sql = ' AND '.join([f"`{column_name}` = %s" for column_name, _ in normalized_locator])
+    locator_params = [locator_value for _, locator_value in normalized_locator]
+    _ensure_single_data_schedule_locator_target(source_table, where_sql, locator_params)
+
+    set_parts = []
+    set_params = []
+    for item in editable_columns:
+        column_name = _to_str(item)
+        if not column_name:
+            continue
+        if not _is_safe_sql_identifier(column_name):
+            raise ValueError('字段数据源不合法')
+        if not _table_has_column(source_table, column_name):
+            raise ValueError('字段数据源不存在')
+        if column_name not in (row_data or {}):
+            continue
+
+        set_parts.append(f"`{column_name}` = %s")
+        set_params.append((row_data or {}).get(column_name))
+    if not set_parts:
+        raise ValueError('没有可更新的列')
+
+    sql = (
+        f"UPDATE `{source_table}` "
+        f"SET {', '.join(set_parts)} "
+        f"WHERE {where_sql}"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql, [*set_params, *locator_params])
+
+
+def _delete_data_schedule_drilldown_row_from_db(payload, row):
+    source_table = _to_str((payload or {}).get('sourceTable'))
+    source_locator = (row or {}).get('__sourceLocator') or []
+
+    if not source_table or not _is_safe_sql_identifier(source_table):
+        raise ValueError('字段数据源不合法')
+    if not _table_exists(source_table):
+        raise ValueError('字段数据源不存在')
+
+    normalized_locator = _normalize_data_schedule_source_locator(source_table, source_locator)
+    where_sql = ' AND '.join([f"`{column_name}` = %s" for column_name, _ in normalized_locator])
+    locator_params = [locator_value for _, locator_value in normalized_locator]
+    _ensure_single_data_schedule_locator_target(source_table, where_sql, locator_params)
+
+    sql = f"DELETE FROM `{source_table}` WHERE {where_sql}"
+    with connection.cursor() as cursor:
+        cursor.execute(sql, locator_params)
+
+
+def _update_data_schedule_field_value_to_db(field_item, field_value):
+    source_table = _to_str((field_item or {}).get('sourceTable'))
+    source_column = _to_str((field_item or {}).get('sourceColumn'))
+    source_locator = (field_item or {}).get('sourceLocator') or []
+
+    if not source_table or not source_column or not isinstance(source_locator, list):
+        raise ValueError('字段缺少可更新的数据源信息')
+    if not _is_data_schedule_detail_column_editable(source_column.lower()):
+        raise ValueError('当前字段不支持编辑')
+    if not (_is_safe_sql_identifier(source_table) and _is_safe_sql_identifier(source_column)):
+        raise ValueError('字段数据源不合法')
+    if not _table_exists(source_table):
+        raise ValueError('字段数据源不存在')
+    if not _table_has_column(source_table, source_column):
+        raise ValueError('字段数据源不存在')
+
+    normalized_locator = _normalize_data_schedule_source_locator(source_table, source_locator)
+
+    where_sql = ' AND '.join([f"`{column_name}` = %s" for column_name, _ in normalized_locator])
+    locator_params = [locator_value for _, locator_value in normalized_locator]
+    _ensure_single_data_schedule_locator_target(source_table, where_sql, locator_params)
+
+    sql = (
+        f"UPDATE `{source_table}` "
+        f"SET `{source_column}` = %s "
+        f"WHERE {where_sql}"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql, [field_value, *locator_params])
 
 
 def _get_data_schedule_field_item(task_id, field_key, bundle=None):
@@ -4195,6 +4885,56 @@ def get_project_status_ranking(request):
 
 @swagger_auto_schema(
     method='get',
+    operation_description='获取数据查询行业选项',
+    responses={200: '获取成功', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_data_query_industries(_request):
+    try:
+        options = _build_data_query_industry_options()
+        return success_response(options, '获取成功')
+    except Exception as exc:
+        logger.exception('get data query industries failed: %s', exc)
+        return error_response(
+            '项目行业查询失败，请检查数据库连接',
+            ERROR_CODE_INVALID_PARAMS,
+            status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='获取行业维度项目字段透视列表',
+    manual_parameters=[
+        openapi.Parameter('industry', openapi.IN_QUERY, description='项目行业（必填，支持 SW/JS）', type=openapi.TYPE_STRING),
+        openapi.Parameter('projectName', openapi.IN_QUERY, description='项目名称关键字（可选）', type=openapi.TYPE_STRING),
+        openapi.Parameter('current', openapi.IN_QUERY, description='页码，默认1', type=openapi.TYPE_INTEGER),
+        openapi.Parameter('size', openapi.IN_QUERY, description='每页条数，默认10，最大50', type=openapi.TYPE_INTEGER),
+    ],
+    responses={200: '获取成功', 400: '参数错误', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_data_query_industry_pivot(request):
+    filters, err_msg = _parse_data_query_industry_pivot_filters(request)
+    if err_msg:
+        return error_response(err_msg, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    try:
+        payload = _build_data_query_industry_pivot_payload(filters)
+        return success_response(payload, '获取成功')
+    except Exception as exc:
+        logger.exception('get data query industry pivot failed: %s', exc)
+        return error_response(
+            '数据查询列表加载失败，请检查数据库连接',
+            ERROR_CODE_INVALID_PARAMS,
+            status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@swagger_auto_schema(
+    method='get',
     operation_description='获取数据调度创建人下拉选项（来源 auth_user）',
     manual_parameters=[
         openapi.Parameter('keyword', openapi.IN_QUERY, description='用户名关键字（可选）', type=openapi.TYPE_STRING),
@@ -4469,7 +5209,17 @@ def update_data_schedule_extract_field(request, task_id, field_key):
             status.HTTP_400_BAD_REQUEST
         )
 
-    _update_data_schedule_field_value(task_id, normalized_field_key, field_value)
+    try:
+        _update_data_schedule_field_value_to_db(field_item, field_value)
+    except ValueError as exc:
+        error_msg = str(exc) or '更新失败'
+        if error_msg == '更新目标不存在':
+            return error_response(error_msg, ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+        return error_response(error_msg, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+    except Exception as exc:
+        logger.exception('update data schedule extract field failed: %s', exc)
+        return error_response('字段更新失败，请检查数据库连接', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     field_item['fieldValueDisplay'] = field_value
     return success_response(_to_data_schedule_field_record(field_item), '更新成功')
 
@@ -4557,16 +5307,16 @@ def create_data_schedule_extract_drilldown_row(request, task_id):
         if not (payload.get('actions') or {}).get('canCreate'):
             return error_response('当前字段不支持新增', ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
 
-        columns = payload.get('columns') or []
+        columns = [item for item in (payload.get('columns') or []) if item.get('editable')]
         normalized_row, normalize_err = _normalize_drilldown_row_data(request.data.get('rowData'), columns)
         if normalize_err:
             return error_response(normalize_err, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
 
-        records = payload.setdefault('records', [])
+        _create_data_schedule_drilldown_row_to_db(payload, normalized_row)
+
+        records = payload.get('records') or []
         row_id = _get_next_drilldown_row_id(records)
-        created_row = {'id': row_id}
-        created_row.update(normalized_row)
-        records.append(created_row)
+        created_row = {'id': row_id, **normalized_row}
 
         response_data = {
             'fieldKey': field_item.get('fieldKey') or field_key,
@@ -4577,6 +5327,20 @@ def create_data_schedule_extract_drilldown_row(request, task_id):
         return error_response(str(exc), ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
     except RuntimeError as exc:
         return error_response(str(exc), ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+    except (IntegrityError, DataError) as exc:
+        logger.exception('create data schedule drilldown row failed: %s', exc)
+        return error_response(
+            _build_data_schedule_db_write_error_message(exc, action_name='新增'),
+            ERROR_CODE_INVALID_PARAMS,
+            status.HTTP_400_BAD_REQUEST
+        )
+    except OperationalError as exc:
+        logger.exception('create data schedule drilldown row failed: %s', exc)
+        return error_response(
+            _build_data_schedule_db_write_error_message(exc, action_name='新增'),
+            ERROR_CODE_INVALID_PARAMS,
+            status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
     except Exception as exc:
         logger.exception('create data schedule drilldown row failed: %s', exc)
         return error_response('新增失败，请检查数据库连接', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -4611,11 +5375,12 @@ def update_data_schedule_extract_drilldown_row(request, task_id, row_id):
         if not target_row:
             return error_response('下钻行不存在', ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
 
-        columns = payload.get('columns') or []
+        columns = [item for item in (payload.get('columns') or []) if item.get('editable')]
         normalized_row, normalize_err = _normalize_drilldown_row_data(request.data.get('rowData'), columns)
         if normalize_err:
             return error_response(normalize_err, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
 
+        _update_data_schedule_drilldown_row_to_db(payload, target_row, normalized_row)
         target_row.update(normalized_row)
         response_data = {
             'fieldKey': field_item.get('fieldKey') or field_key,
@@ -4655,7 +5420,7 @@ def delete_data_schedule_extract_drilldown_row(request, task_id, row_id):
         if not target_row:
             return error_response('下钻行不存在', ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
 
-        payload['records'] = [item for item in records if item is not target_row]
+        _delete_data_schedule_drilldown_row_from_db(payload, target_row)
         response_data = {
             'fieldKey': field_item.get('fieldKey') or field_key,
             'rowId': row_id

@@ -21,6 +21,16 @@ urlpatterns = [
         name='get_project_status_ranking'
     ),
     path(
+        'data-query/industries/',
+        views.get_data_query_industries,
+        name='get_data_query_industries'
+    ),
+    path(
+        'data-query/industry-pivot/',
+        views.get_data_query_industry_pivot,
+        name='get_data_query_industry_pivot'
+    ),
+    path(
         'data-schedule/creators/',
         views.get_data_schedule_creators,
         name='get_data_schedule_creators'

@@ -53,12 +53,49 @@
   - `project status` 用于单项目状态详情（状态标签、步骤、错误、文件统计）。
   - `ranking` 用于概览 TOP20（按 `category` + 时间范围过滤）。
 
+### 数据查询相关
+- 后端接口包括：
+  - `/api/data-query/industries/`
+  - `/api/data-query/industry-pivot/`
+- 约定说明：
+  - 行业选项来自 `c_r_cm_project.industry`，前端默认取首项；
+  - `industry-pivot` 返回 `columns + records` 动态结构；
+  - `industry` 必填，仅支持 `SW/JS`；
+  - 缺失字段值统一返回 `--`；
+  - 本模块仅只读查询，不涉及写库。
+
 ### 失败日志相关
 - 后端接口包括：
   - `/api/admin/logs/api-failures/`
 - 约定说明：
   - 所有 `/api/` 路径接口失败会写入 `backend/logs/api_failure.log`。
   - 可通过日志接口按 `lines/keyword` 读取失败记录。
+
+### 数据调度详情字段编辑相关
+- 后端接口包括：
+  - `PATCH /api/data-schedule/tasks/{taskId}/extract-result/fields/{fieldKey}/`
+- 约定说明：
+  - 字段是否可编辑由后端 `canEdit` 动态返回，前端只负责按该值控制按钮可用态。
+  - 仅非受保护字段允许编辑，以下类型默认不可编辑：
+    - 主键/关联键（例如 `id`、`project_id`、`prj_section_id`、`*_id`）；
+    - 系统时间字段（如 `create_time`、`update_time` 等）。
+  - PATCH 成功后，后端会执行真实数据库 `UPDATE`；前端刷新列表后应回读最新值。
+  - 常见失败语义：
+    - `400`：字段不支持编辑，字段缺少可更新的数据源信息，或更新目标不唯一；
+    - `404`：字段不存在，或更新目标行不存在。
+
+### 数据调度详情下钻行 CRUD 相关
+- 后端接口包括：
+  - `GET /api/data-schedule/tasks/{taskId}/extract-result/drilldown/?fieldKey=...`
+  - `POST /api/data-schedule/tasks/{taskId}/extract-result/drilldown/rows/`
+  - `PATCH /api/data-schedule/tasks/{taskId}/extract-result/drilldown/rows/{rowId}/`
+  - `DELETE /api/data-schedule/tasks/{taskId}/extract-result/drilldown/rows/{rowId}/delete/?fieldKey=...`
+- 约定说明：
+  - 下钻返回中的 `actions` 由后端按可写条件动态计算，不再固定 false。
+  - 下钻列中 `editable=true` 的字段才允许前端进入新增/编辑表单。
+  - 新增/编辑/删除会执行真实数据库写入，并在写入前做命中范围校验：
+    - 命中 0 行：返回“目标不存在”；
+    - 命中多行：返回“目标不唯一，暂不支持编辑”。
 
 ## 5. 契约维护检查清单
 - 后端字段名变化时，同步更新前端请求/响应类型定义。

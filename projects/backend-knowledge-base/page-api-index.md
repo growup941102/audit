@@ -13,6 +13,7 @@
 | 页面名称 | 前端路由 | 文档 |
 | --- | --- | --- |
 | 数据概览 | `/data-fetch/data-overview` | `page-api-data-overview.md` |
+| 数据查询 | `/data-fetch/data-query` | `page-api-data-query.md` |
 
 ## 4. 文档结构规范（每个页面）
 每个页面文档建议包含：
@@ -22,4 +23,3 @@
 - 关键业务逻辑（状态判定/聚合/排序规则）
 - 常见失败与排查入口
 - 接口编写示例（可复用模板）
-

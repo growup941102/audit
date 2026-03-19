@@ -5,6 +5,7 @@
  */
 
 export * from './useAuth';
+export * from './useDataQuery';
 export * from './useDataOverview';
 export * from './useDataSchedule';
 export * from './useRoute';

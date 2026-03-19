@@ -9,6 +9,30 @@ export const QUERY_KEYS = {
   AUTH: {
     USER_INFO: ['auth', 'userInfo'] as const
   },
+  // Data Overview
+  DATA_OVERVIEW: {
+    PROJECT_STATUS_DETAIL: (projectId: string) => ['dataOverview', 'projectStatusDetail', projectId] as const,
+    PROJECT_STATUS_RANKING: (params: Api.DataOverview.ProjectStatusRankingParams) =>
+      ['dataOverview', 'projectStatusRanking', params] as const,
+    PROJECT_STATUS_SUMMARY: ['dataOverview', 'projectStatusSummary'] as const
+  },
+  // Data Query
+  DATA_QUERY: {
+    INDUSTRIES: ['dataQuery', 'industries'] as const,
+    INDUSTRY_PIVOT: (params: Api.DataQuery.IndustryPivotParams | null) =>
+      ['dataQuery', 'industryPivot', params] as const
+  },
+  // Data Schedule
+  DATA_SCHEDULE: {
+    EXTRACT_DRILLDOWN: (params: Api.DataSchedule.DrilldownParams | null) =>
+      ['dataSchedule', 'extractDrilldown', params] as const,
+    EXTRACT_FIELDS: (params: Api.DataSchedule.FieldListParams | null) =>
+      ['dataSchedule', 'extractFields', params] as const,
+    EXTRACT_SUMMARY: (taskId: string) => ['dataSchedule', 'extractSummary', taskId] as const,
+    LOG_LIST: (params: Api.DataSchedule.TaskLogListParams | null) => ['dataSchedule', 'logList', params] as const,
+    LOG_META: (taskId: string) => ['dataSchedule', 'logMeta', taskId] as const,
+    SELECT_DATA: ['dataSchedule', 'selectData'] as const
+  },
   // Route
   ROUTE: {
     CONSTANT_ROUTES: ['route', 'constantRoutes'] as const,
@@ -26,22 +50,6 @@ export const QUERY_KEYS = {
     WATERMARK_SETTINGS: ['systemManage', 'watermarkSettings'] as const,
     WEBSITE_BRAND_SETTINGS: ['systemManage', 'websiteBrandSettings'] as const,
     WEBSITE_SETTINGS: ['systemManage', 'websiteSettings'] as const
-  },
-  // Data Schedule
-  DATA_SCHEDULE: {
-    EXTRACT_DRILLDOWN: (params: Api.DataSchedule.DrilldownParams | null) => ['dataSchedule', 'extractDrilldown', params] as const,
-    EXTRACT_FIELDS: (params: Api.DataSchedule.FieldListParams | null) => ['dataSchedule', 'extractFields', params] as const,
-    EXTRACT_SUMMARY: (taskId: string) => ['dataSchedule', 'extractSummary', taskId] as const,
-    LOG_META: (taskId: string) => ['dataSchedule', 'logMeta', taskId] as const,
-    LOG_LIST: (params: Api.DataSchedule.TaskLogListParams | null) => ['dataSchedule', 'logList', params] as const,
-    SELECT_DATA: ['dataSchedule', 'selectData'] as const
-  },
-  // Data Overview
-  DATA_OVERVIEW: {
-    PROJECT_STATUS_DETAIL: (projectId: string) => ['dataOverview', 'projectStatusDetail', projectId] as const,
-    PROJECT_STATUS_RANKING: (params: Api.DataOverview.ProjectStatusRankingParams) =>
-      ['dataOverview', 'projectStatusRanking', params] as const,
-    PROJECT_STATUS_SUMMARY: ['dataOverview', 'projectStatusSummary'] as const
   }
 } as const;
 

@@ -1,18 +1,18 @@
-import { DownloadOutlined, EyeOutlined, LoadingOutlined } from "@ant-design/icons";
-import type { ColumnsType } from "antd/es/table";
+import { DownloadOutlined, EyeOutlined, LoadingOutlined } from '@ant-design/icons';
+import type { ColumnsType } from 'antd/es/table';
 
 import {
   createDataScheduleDrilldownRow,
   deleteDataScheduleDrilldownRow,
   fetchDataScheduleExtractExport,
   updateDataScheduleDrilldownRow,
-  updateDataScheduleExtractField,
-} from "@/service/api";
+  updateDataScheduleExtractField
+} from '@/service/api';
 import {
   useDataScheduleExtractDrilldown,
   useDataScheduleExtractFields,
-  useDataScheduleTaskDetail,
-} from "@/service/hooks";
+  useDataScheduleTaskDetail
+} from '@/service/hooks';
 
 interface Props {
   readonly onBack: () => void;
@@ -23,37 +23,37 @@ const FIELD_PAGE_SIZE = 20;
 const DRILLDOWN_PAGE_SIZE = 10;
 
 const statusColorMap: Record<string, string> = {
-  failed: "error",
-  paused: "warning",
-  pending: "default",
-  running: "processing",
-  stopped: "default",
-  success: "success",
+  failed: 'error',
+  paused: 'warning',
+  pending: 'default',
+  running: 'processing',
+  stopped: 'default',
+  success: 'success'
 };
 
 const statusI18nMap: Record<string, string> = {
-  failed: "page.dataSchedule.statusFailed",
-  paused: "page.dataSchedule.statusPaused",
-  pending: "page.dataSchedule.statusPending",
-  running: "page.dataSchedule.statusRunning",
-  stopped: "page.dataSchedule.statusStopped",
-  success: "page.dataSchedule.statusSuccess",
+  failed: 'page.dataSchedule.statusFailed',
+  paused: 'page.dataSchedule.statusPaused',
+  pending: 'page.dataSchedule.statusPending',
+  running: 'page.dataSchedule.statusRunning',
+  stopped: 'page.dataSchedule.statusStopped',
+  success: 'page.dataSchedule.statusSuccess'
 };
 
-const scopes: Api.DataSchedule.Scope[] = ["all", "complete", "missing"];
+const scopes: Api.DataSchedule.Scope[] = ['all', 'complete', 'missing'];
 
 // eslint-disable-next-line complexity
 const ScheduleDetailView = ({ onBack, taskId }: Props) => {
   const { t } = useTranslation();
-  const [scope, setScope] = useState<Api.DataSchedule.Scope>("all");
+  const [scope, setScope] = useState<Api.DataSchedule.Scope>('all');
   const [fieldCurrent, setFieldCurrent] = useState(1);
-  const [drilldownFieldKey, setDrilldownFieldKey] = useState("");
+  const [drilldownFieldKey, setDrilldownFieldKey] = useState('');
   const [drilldownCurrent, setDrilldownCurrent] = useState(1);
   const [downloading, setDownloading] = useState(false);
   const [editingField, setEditingField] = useState<{ fieldKey: string; fieldName: string } | null>(null);
-  const [editingFieldValue, setEditingFieldValue] = useState("");
+  const [editingFieldValue, setEditingFieldValue] = useState('');
   const [savingField, setSavingField] = useState(false);
-  const [drilldownRowModal, setDrilldownRowModal] = useState<{ mode: "create" | "edit"; rowId?: number } | null>(null);
+  const [drilldownRowModal, setDrilldownRowModal] = useState<{ mode: 'create' | 'edit'; rowId?: number } | null>(null);
   const [savingDrilldownRow, setSavingDrilldownRow] = useState(false);
   const [deletingDrilldownRowId, setDeletingDrilldownRowId] = useState<number | null>(null);
   const [drilldownRowForm] = AForm.useForm<Record<string, string>>();
@@ -63,7 +63,7 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
     current: fieldCurrent,
     scope,
     size: FIELD_PAGE_SIZE,
-    taskId,
+    taskId
   });
   const drilldownQuery = useDataScheduleExtractDrilldown(
     drilldownFieldKey
@@ -72,38 +72,41 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
           fieldKey: drilldownFieldKey,
           scope,
           size: DRILLDOWN_PAGE_SIZE,
-          taskId,
+          taskId
         }
-      : null,
+      : null
   );
 
   const summary = detailQuery.data;
   const fieldList = fieldsQuery.data;
   const drilldown = drilldownQuery.data;
-  const counts = summary?.counts ||
-    fieldList?.counts || { all: 0, complete: 0, missing: 0 };
+  const counts = summary?.counts || fieldList?.counts || { all: 0, complete: 0, missing: 0 };
   const isDrilldownOpen = Boolean(drilldownFieldKey);
   const isEditModalOpen = Boolean(editingField);
   const isDrilldownRowModalOpen = Boolean(drilldownRowModal);
+  const editableDrilldownColumns = useMemo(
+    () => (drilldown?.columns || []).filter(column => Boolean(column.editable)),
+    [drilldown?.columns]
+  );
 
   useEffect(() => {
     setEditingField(null);
-    setEditingFieldValue("");
+    setEditingFieldValue('');
     setDrilldownRowModal(null);
     drilldownRowForm.resetFields();
-  }, [taskId]);
+  }, [drilldownRowForm, taskId]);
 
   const fieldColumns = useMemo<ColumnsType<Api.DataSchedule.FieldRecord>>(
     () => [
       {
-        dataIndex: "fieldName",
-        key: "fieldName",
-        title: t("page.dataSchedule.detailFieldName"),
-        width: 300,
+        dataIndex: 'fieldName',
+        key: 'fieldName',
+        title: t('page.dataSchedule.detailFieldName'),
+        width: 300
       },
       {
-        dataIndex: "fieldValueDisplay",
-        key: "fieldValueDisplay",
+        dataIndex: 'fieldValueDisplay',
+        key: 'fieldValueDisplay',
         render: (value: string, record) => {
           if (record.canDrilldown) {
             return (
@@ -116,7 +119,7 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
                   setDrilldownCurrent(1);
                 }}
               >
-                {record.drilldownLabel || t("page.dataSchedule.detailView")}
+                {record.drilldownLabel || t('page.dataSchedule.detailView')}
               </AButton>
             );
           }
@@ -127,11 +130,11 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
             </ATooltip>
           );
         },
-        title: t("page.dataSchedule.detailFieldValue"),
+        title: t('page.dataSchedule.detailFieldValue')
       },
       {
-        align: "center",
-        key: "operate",
+        align: 'center',
+        key: 'operate',
         render: (_, record) => (
           <AButton
             className="px-0!"
@@ -144,36 +147,32 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
                 fieldKey: record.fieldKey,
                 fieldName: record.fieldName
               });
-              setEditingFieldValue(record.fieldValueDisplay ?? "");
+              setEditingFieldValue(record.fieldValueDisplay ?? '');
             }}
           >
-            {t("page.dataSchedule.detailEdit")}
+            {t('page.dataSchedule.detailEdit')}
           </AButton>
         ),
-        title: t("page.dataSchedule.detailAction"),
-        width: 140,
-      },
+        title: t('page.dataSchedule.detailAction'),
+        width: 140
+      }
     ],
-    [t],
+    [t]
   );
 
-  const drilldownColumns = useMemo<
-    ColumnsType<Api.DataSchedule.DrilldownRecord>
-  >(() => {
+  const drilldownColumns: ColumnsType<Api.DataSchedule.DrilldownRecord> = (() => {
     const canEdit = Boolean(drilldown?.actions?.canEdit);
     const canDelete = Boolean(drilldown?.actions?.canDelete);
-    const dynamicColumns: ColumnsType<Api.DataSchedule.DrilldownRecord> = (
-      drilldown?.columns || []
-    ).map((column) => ({
+    const dynamicColumns: ColumnsType<Api.DataSchedule.DrilldownRecord> = (drilldown?.columns || []).map(column => ({
       dataIndex: column.key,
       key: column.key,
       title: column.title,
-      width: column.width,
+      width: column.width
     }));
 
     dynamicColumns.push({
-      align: "center",
-      key: "__actions",
+      align: 'center',
+      key: '__actions',
       render: (_, record) => (
         <div className="flex-center gap-8px">
           <AButton
@@ -183,11 +182,11 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
             type="link"
             onClick={() => openEditDrilldownRowModal(record)}
           >
-            {t("page.dataSchedule.detailEdit")}
+            {t('page.dataSchedule.detailEdit')}
           </AButton>
           <APopconfirm
             disabled={!canDelete}
-            title={t("common.confirmDelete")}
+            title={t('common.confirmDelete')}
             onConfirm={() => handleDeleteDrilldownRow(record)}
           >
             <AButton
@@ -198,20 +197,20 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
               size="small"
               type="link"
             >
-              {t("common.delete")}
+              {t('common.delete')}
             </AButton>
           </APopconfirm>
         </div>
       ),
-      title: t("page.dataSchedule.detailAction"),
-      width: 140,
+      title: t('page.dataSchedule.detailAction'),
+      width: 140
     });
 
     return dynamicColumns;
-  }, [deletingDrilldownRowId, drilldown?.actions?.canDelete, drilldown?.actions?.canEdit, drilldown?.columns, t]);
+  })();
 
   function closeDrilldown() {
-    setDrilldownFieldKey("");
+    setDrilldownFieldKey('');
     setDrilldownCurrent(1);
     setDrilldownRowModal(null);
     drilldownRowForm.resetFields();
@@ -231,30 +230,34 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
   }
 
   function openCreateDrilldownRowModal() {
-    const columns = drilldown?.columns || [];
+    const columns = editableDrilldownColumns;
+    if (!columns.length) return;
+
     const initialValues: Record<string, string> = {};
     columns.forEach(column => {
-      initialValues[column.key] = "";
+      initialValues[column.key] = '';
     });
     drilldownRowForm.setFieldsValue(initialValues);
-    setDrilldownRowModal({ mode: "create" });
+    setDrilldownRowModal({ mode: 'create' });
   }
 
   function openEditDrilldownRowModal(record: Api.DataSchedule.DrilldownRecord) {
     const rowId = parseRowId(record);
     if (!rowId) {
-      window.$message?.error(t("common.error"));
+      window.$message?.error(t('common.error'));
       return;
     }
 
-    const columns = drilldown?.columns || [];
+    const columns = editableDrilldownColumns;
+    if (!columns.length) return;
+
     const editValues: Record<string, string> = {};
     columns.forEach(column => {
       const value = record[column.key];
-      editValues[column.key] = value === null || value === undefined ? "" : String(value);
+      editValues[column.key] = value === null || value === undefined ? '' : String(value);
     });
     drilldownRowForm.setFieldsValue(editValues);
-    setDrilldownRowModal({ mode: "edit", rowId });
+    setDrilldownRowModal({ mode: 'edit', rowId });
   }
 
   function closeDrilldownRowModal() {
@@ -273,13 +276,13 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
       });
 
       setSavingDrilldownRow(true);
-      if (drilldownRowModal.mode === "create") {
+      if (drilldownRowModal.mode === 'create') {
         await createDataScheduleDrilldownRow({
           fieldKey: drilldownFieldKey,
           rowData,
           taskId
         });
-        window.$message?.success(t("page.dataSchedule.detailCreateRowSuccess"));
+        window.$message?.success(t('page.dataSchedule.detailCreateRowSuccess'));
       } else {
         await updateDataScheduleDrilldownRow({
           fieldKey: drilldownFieldKey,
@@ -287,15 +290,15 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
           rowId: drilldownRowModal.rowId as number,
           taskId
         });
-        window.$message?.success(t("page.dataSchedule.detailUpdateRowSuccess"));
+        window.$message?.success(t('page.dataSchedule.detailUpdateRowSuccess'));
       }
       await drilldownQuery.refetch();
       closeDrilldownRowModal();
     } catch (error) {
-      if (typeof error === "object" && error && "errorFields" in error) {
+      if (typeof error === 'object' && error && 'errorFields' in error) {
         return;
       }
-      const message = error instanceof Error ? error.message : t("common.error");
+      const message = error instanceof Error ? error.message : t('common.error');
       if (message) {
         window.$message?.error(message);
       }
@@ -309,7 +312,7 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
 
     const rowId = parseRowId(record);
     if (!rowId) {
-      window.$message?.error(t("common.error"));
+      window.$message?.error(t('common.error'));
       return;
     }
 
@@ -321,9 +324,9 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
         taskId
       });
       await drilldownQuery.refetch();
-      window.$message?.success(t("page.dataSchedule.detailDeleteRowSuccess"));
+      window.$message?.success(t('page.dataSchedule.detailDeleteRowSuccess'));
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("common.error");
+      const message = error instanceof Error ? error.message : t('common.error');
       window.$message?.error(message);
     } finally {
       setDeletingDrilldownRowId(null);
@@ -335,17 +338,16 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
       setDownloading(true);
       const result = await fetchDataScheduleExtractExport({ scope, taskId });
       const downloadUrl = URL.createObjectURL(result.blob);
-      const anchor = document.createElement("a");
+      const anchor = document.createElement('a');
       anchor.download = result.fileName;
       anchor.href = downloadUrl;
       document.body.append(anchor);
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(downloadUrl);
-      window.$message?.success(t("page.dataSchedule.detailDownloadSuccess"));
+      window.$message?.success(t('page.dataSchedule.detailDownloadSuccess'));
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : t("common.error");
+      const message = error instanceof Error ? error.message : t('common.error');
       window.$message?.error(message);
     } finally {
       setDownloading(false);
@@ -354,7 +356,7 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
 
   function closeEditFieldModal() {
     setEditingField(null);
-    setEditingFieldValue("");
+    setEditingFieldValue('');
   }
 
   async function handleSaveEditField() {
@@ -368,10 +370,10 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
         taskId
       });
       await fieldsQuery.refetch();
-      window.$message?.success(t("page.dataSchedule.detailEditSaved"));
+      window.$message?.success(t('page.dataSchedule.detailEditSaved'));
       closeEditFieldModal();
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("common.error");
+      const message = error instanceof Error ? error.message : t('common.error');
       window.$message?.error(message);
     } finally {
       setSavingField(false);
@@ -382,96 +384,82 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
     <div
       className="h-full overflow-auto bg-[linear-gradient(180deg,#f8fbff_0%,#f4f6fb_100%)] p-12px"
       style={{
-        fontFamily: "Fira Sans, PingFang SC, Microsoft YaHei, sans-serif",
+        fontFamily: 'Fira Sans, PingFang SC, Microsoft YaHei, sans-serif'
       }}
     >
       <div className="mx-auto max-w-1360px flex-col gap-14px">
         <div className="flex items-center gap-10px">
           <AButton
-            aria-label={t("common.back")}
-            className="h-40px w-40px rounded-full border-0 bg-white text-18px text-[#1f3a8a] shadow-[0_6px_16px_rgba(15,23,42,0.08)]"
+            aria-label={t('common.back')}
+            className="h-40px w-40px border-0 rounded-full bg-white text-18px text-[#1f3a8a] shadow-[0_6px_16px_rgba(15,23,42,0.08)]"
             type="text"
             onClick={onBack}
           >
-            {"<"}
+            {'<'}
           </AButton>
           <div className="min-w-0">
-            <div className="text-12px font-600 tracking-[0.12em] text-[#64748b]">
-              DATA SCHEDULE DETAIL
-            </div>
-            <h2 className="m-0 line-clamp-1 text-28px text-[#0f172a]">
-              {summary?.projectName || taskId}
-            </h2>
+            <div className="text-12px text-[#64748b] font-600 tracking-[0.12em]">DATA SCHEDULE DETAIL</div>
+            <h2 className="line-clamp-1 m-0 text-28px text-[#0f172a]">{summary?.projectName || taskId}</h2>
           </div>
         </div>
 
         <ACard
-          className="rounded-12px border-0 shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
+          className="border-0 rounded-12px shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
           styles={{ body: { padding: 18 } }}
-          title={
-            <div className="text-17px font-700 text-[#0f172a]">
-              {t("page.dataSchedule.detailTaskInfo")}
-            </div>
-          }
+          title={<div className="text-17px text-[#0f172a] font-700">{t('page.dataSchedule.detailTaskInfo')}</div>}
           variant="borderless"
         >
           {detailQuery.isLoading ? (
-            <ASkeleton active paragraph={{ rows: 4 }} />
+            <ASkeleton
+              active
+              paragraph={{ rows: 4 }}
+            />
           ) : (
             <div className="flex-col gap-12px">
               <ADescriptions
                 bordered
                 column={3}
+                size="small"
                 items={[
                   {
-                    key: "taskId",
-                    label: t("page.dataSchedule.taskId"),
                     children: summary?.taskId || taskId,
+                    key: 'taskId',
+                    label: t('page.dataSchedule.taskId')
                   },
                   {
-                    key: "projectName",
-                    label: t("page.dataSchedule.projectName"),
-                    children: summary?.projectName || "--",
+                    children: summary?.projectName || '--',
+                    key: 'projectName',
+                    label: t('page.dataSchedule.projectName')
                   },
                   {
-                    key: "bidNo",
-                    label: t("page.dataSchedule.detailBidNo"),
-                    children: summary?.bidNo || "--",
+                    children: summary?.bidNo || '--',
+                    key: 'bidNo',
+                    label: t('page.dataSchedule.detailBidNo')
                   },
                   {
-                    key: "creator",
-                    label: t("page.dataSchedule.creator"),
-                    children: summary?.creator || "--",
+                    children: summary?.creator || '--',
+                    key: 'creator',
+                    label: t('page.dataSchedule.creator')
                   },
                   {
-                    key: "createTime",
-                    label: t("page.dataSchedule.createTime"),
-                    children: summary?.createTime || "--",
+                    children: summary?.createTime || '--',
+                    key: 'createTime',
+                    label: t('page.dataSchedule.createTime')
                   },
                   {
-                    key: "status",
-                    label: t("page.dataSchedule.status"),
                     children: (
-                      <ATag
-                        color={
-                          statusColorMap[summary?.status || ""] || "default"
-                        }
-                      >
-                        {t(
-                          statusI18nMap[summary?.status || ""] ||
-                            "page.dataSchedule.statusPending",
-                        )}
+                      <ATag color={statusColorMap[summary?.status || ''] || 'default'}>
+                        {t(statusI18nMap[summary?.status || ''] || 'page.dataSchedule.statusPending')}
                       </ATag>
                     ),
-                  },
+                    key: 'status',
+                    label: t('page.dataSchedule.status')
+                  }
                 ]}
-                size="small"
               />
 
-              <div className="rounded-10px border border-[#dbeafe] bg-[#f8fbff] p-10px">
-                <div className="mb-8px text-13px text-[#64748b]">
-                  {t("page.dataSchedule.detailKeyMatchRate")}
-                </div>
+              <div className="border border-[#dbeafe] rounded-10px bg-[#f8fbff] p-10px">
+                <div className="mb-8px text-13px text-[#64748b]">{t('page.dataSchedule.detailKeyMatchRate')}</div>
                 <div className="flex items-center gap-10px">
                   <AProgress
                     percent={summary?.progress || 0}
@@ -479,9 +467,7 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
                     size="small"
                     strokeColor="#52c41a"
                   />
-                  <div className="w-48px text-right text-13px font-600 text-[#16a34a]">
-                    {summary?.progress || 0}%
-                  </div>
+                  <div className="w-48px text-right text-13px text-[#16a34a] font-600">{summary?.progress || 0}%</div>
                 </div>
               </div>
             </div>
@@ -489,38 +475,37 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
         </ACard>
 
         <ACard
-          className="rounded-12px border-0 shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
+          className="border-0 rounded-12px shadow-[0_10px_24px_rgba(15,23,42,0.08)]"
           styles={{ body: { padding: 16 } }}
+          variant="borderless"
           title={
             <div className="flex items-center justify-between gap-12px">
-              <div className="text-17px font-700 text-[#0f172a]">
-                {t("page.dataSchedule.detailDataDetail")}
-              </div>
+              <div className="text-17px text-[#0f172a] font-700">{t('page.dataSchedule.detailDataDetail')}</div>
               <div className="flex items-center gap-8px">
                 <div className="flex items-center gap-2px rounded-full bg-[#f1f5f9] p-3px">
-                  {scopes.map((item) => {
+                  {scopes.map(item => {
                     const active = scope === item;
                     const count = counts[item] || 0;
                     const labelMap: Record<Api.DataSchedule.Scope, string> = {
-                      all: t("page.dataSchedule.detailAll"),
-                      complete: t("page.dataSchedule.detailComplete"),
-                      missing: t("page.dataSchedule.detailMissing"),
+                      all: t('page.dataSchedule.detailAll'),
+                      complete: t('page.dataSchedule.detailComplete'),
+                      missing: t('page.dataSchedule.detailMissing')
                     };
 
                     return (
                       <button
-                        className={`cursor-pointer rounded-full border-0 px-10px py-4px text-13px font-500 transition-all duration-200 ${
-                          active
-                            ? "bg-white text-[#0f172a] shadow-sm"
-                            : "bg-transparent text-[#64748b] hover:text-[#0f172a]"
-                        }`}
                         key={item}
                         type="button"
+                        className={`cursor-pointer rounded-full border-0 px-10px py-4px text-13px font-500 transition-all duration-200 ${
+                          active
+                            ? 'bg-white text-[#0f172a] shadow-sm'
+                            : 'bg-transparent text-[#64748b] hover:text-[#0f172a]'
+                        }`}
                         onClick={() => handleSwitchScope(item)}
                       >
                         {labelMap[item]}
                         <span
-                          className={`ml-4px rounded-full px-5px py-1px text-11px ${active ? "bg-[#f1f5f9] text-[#475569]" : "bg-[#e2e8f0] text-[#94a3b8]"}`}
+                          className={`ml-4px rounded-full px-5px py-1px text-11px ${active ? 'bg-[#f1f5f9] text-[#475569]' : 'bg-[#e2e8f0] text-[#94a3b8]'}`}
                         >
                           {count}
                         </span>
@@ -529,10 +514,10 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
                   })}
                 </div>
                 <div className="flex items-center gap-4px rounded-full bg-white p-2px shadow-[0_1px_4px_rgba(15,23,42,0.08)]">
-                  <ATooltip title={t("page.dataSchedule.detailPreview")}>
+                  <ATooltip title={t('page.dataSchedule.detailPreview')}>
                     <button
-                      className="flex-center h-28px w-28px cursor-not-allowed rounded-full border-0 bg-transparent text-14px text-[#cbd5e1] transition-colors"
                       disabled
+                      className="h-28px w-28px flex-center cursor-not-allowed border-0 rounded-full bg-transparent text-14px text-[#cbd5e1] transition-colors"
                       type="button"
                     >
                       <EyeOutlined />
@@ -541,106 +526,95 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
                   <div className="h-16px w-1px bg-[#e2e8f0]" />
                   <ATooltip
                     title={
-                      downloading
-                        ? t("page.dataSchedule.detailDownloading")
-                        : t("page.dataSchedule.detailDownload")
+                      downloading ? t('page.dataSchedule.detailDownloading') : t('page.dataSchedule.detailDownload')
                     }
                   >
                     <button
-                      className={`flex-center h-28px w-28px rounded-full border-0 text-14px transition-all duration-200 ${
-                        downloading
-                          ? "cursor-wait bg-[#e0e7ff] text-[#818cf8]"
-                          : "cursor-pointer bg-[#eef2ff] text-[#4f46e5] hover:bg-[#4f46e5] hover:text-white hover:shadow-[0_2px_8px_rgba(79,70,229,0.3)]"
-                      }`}
                       disabled={downloading}
                       type="button"
+                      className={`flex-center h-28px w-28px rounded-full border-0 text-14px transition-all duration-200 ${
+                        downloading
+                          ? 'cursor-wait bg-[#e0e7ff] text-[#818cf8]'
+                          : 'cursor-pointer bg-[#eef2ff] text-[#4f46e5] hover:bg-[#4f46e5] hover:text-white hover:shadow-[0_2px_8px_rgba(79,70,229,0.3)]'
+                      }`}
                       onClick={handleDownload}
                     >
-                      {downloading ? (
-                        <LoadingOutlined spin />
-                      ) : (
-                        <DownloadOutlined />
-                      )}
+                      {downloading ? <LoadingOutlined spin /> : <DownloadOutlined />}
                     </button>
                   </ATooltip>
                 </div>
               </div>
             </div>
           }
-          variant="borderless"
         >
           <ATable
-            rowKey="fieldKey"
             columns={fieldColumns}
             dataSource={fieldList?.records || []}
             loading={fieldsQuery.isFetching}
+            rowKey="fieldKey"
+            size="small"
             pagination={{
               current: fieldList?.current || fieldCurrent,
-              onChange: (page) => setFieldCurrent(page),
+              onChange: page => setFieldCurrent(page),
               pageSize: fieldList?.size || FIELD_PAGE_SIZE,
               showSizeChanger: false,
-              total: fieldList?.total || 0,
+              total: fieldList?.total || 0
             }}
-            size="small"
           />
         </ACard>
       </div>
 
       <AModal
         destroyOnClose
+        footer={<AButton onClick={closeDrilldown}>{t('page.dataSchedule.detailClose')}</AButton>}
         open={isDrilldownOpen}
-        title={drilldown?.title || t("page.dataSchedule.detailFieldDetail")}
+        title={drilldown?.title || t('page.dataSchedule.detailFieldDetail')}
         width="min(1280px, calc(100vw - 32px))"
-        footer={
-          <AButton onClick={closeDrilldown}>
-            {t("page.dataSchedule.detailClose")}
-          </AButton>
-        }
         onCancel={closeDrilldown}
       >
         <div className="mb-10px flex items-center justify-between gap-12px">
-          <span className="text-13px text-[#94a3b8]">
-            {t("page.dataSchedule.detailSourceHint")}
-          </span>
+          <span className="text-13px text-[#94a3b8]">{t('page.dataSchedule.detailSourceHint')}</span>
           <AButton
-            disabled={!drilldown?.actions?.canCreate}
+            disabled={!drilldown?.actions?.canCreate || editableDrilldownColumns.length === 0}
             size="small"
             onClick={openCreateDrilldownRowModal}
           >
-            {t("page.dataSchedule.detailCreateRow")}
+            {t('page.dataSchedule.detailCreateRow')}
           </AButton>
         </div>
 
         <ATable
-          rowKey={(record, index) =>
-            String(record.id || `${drilldownFieldKey}-${index || 0}`)
-          }
           columns={drilldownColumns}
           dataSource={drilldown?.records || []}
           loading={drilldownQuery.isFetching}
-          locale={{ emptyText: t("page.dataSchedule.detailNoData") }}
+          locale={{ emptyText: t('page.dataSchedule.detailNoData') }}
+          rowKey={(record, index) => String(record.id || `${drilldownFieldKey}-${index || 0}`)}
+          scroll={{ x: 'max-content', y: 420 }}
+          size="small"
           pagination={{
             current: drilldown?.current || drilldownCurrent,
-            onChange: (page) => setDrilldownCurrent(page),
+            onChange: page => setDrilldownCurrent(page),
             pageSize: drilldown?.size || DRILLDOWN_PAGE_SIZE,
             showSizeChanger: false,
-            total: drilldown?.total || 0,
+            total: drilldown?.total || 0
           }}
-          scroll={{ x: "max-content", y: 420 }}
-          size="small"
         />
       </AModal>
 
       <AModal
         destroyOnClose
         open={isEditModalOpen}
-        title={t("page.dataSchedule.detailEditFieldTitle", { fieldName: editingField?.fieldName || "" })}
+        title={t('page.dataSchedule.detailEditFieldTitle', { fieldName: editingField?.fieldName || '' })}
         width="min(980px, calc(100vw - 24px))"
         footer={
           <div className="flex justify-end gap-8px">
-            <AButton onClick={closeEditFieldModal}>{t("common.cancel")}</AButton>
-            <AButton loading={savingField} type="primary" onClick={handleSaveEditField}>
-              {t("page.dataSchedule.detailSave")}
+            <AButton onClick={closeEditFieldModal}>{t('common.cancel')}</AButton>
+            <AButton
+              loading={savingField}
+              type="primary"
+              onClick={handleSaveEditField}
+            >
+              {t('page.dataSchedule.detailSave')}
             </AButton>
           </div>
         }
@@ -648,7 +622,7 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
       >
         <AInput.TextArea
           autoSize={{ maxRows: 12, minRows: 8 }}
-          placeholder={t("page.dataSchedule.detailEditPlaceholder")}
+          placeholder={t('page.dataSchedule.detailEditPlaceholder')}
           value={editingFieldValue}
           onChange={event => setEditingFieldValue(event.target.value)}
         />
@@ -657,19 +631,24 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
       <AModal
         destroyOnClose
         open={isDrilldownRowModalOpen}
-        title={
-          drilldownRowModal?.mode === "create"
-            ? t("page.dataSchedule.detailDrilldownCreateRowTitle")
-            : t("page.dataSchedule.detailDrilldownEditRowTitle")
-        }
         width="min(860px, calc(100vw - 24px))"
         footer={
           <div className="flex justify-end gap-8px">
-            <AButton onClick={closeDrilldownRowModal}>{t("common.cancel")}</AButton>
-            <AButton loading={savingDrilldownRow} type="primary" onClick={handleSaveDrilldownRow}>
-              {t("page.dataSchedule.detailSave")}
+            <AButton onClick={closeDrilldownRowModal}>{t('common.cancel')}</AButton>
+            <AButton
+              disabled={editableDrilldownColumns.length === 0}
+              loading={savingDrilldownRow}
+              type="primary"
+              onClick={handleSaveDrilldownRow}
+            >
+              {t('page.dataSchedule.detailSave')}
             </AButton>
           </div>
+        }
+        title={
+          drilldownRowModal?.mode === 'create'
+            ? t('page.dataSchedule.detailDrilldownCreateRowTitle')
+            : t('page.dataSchedule.detailDrilldownEditRowTitle')
         }
         onCancel={closeDrilldownRowModal}
       >
@@ -677,15 +656,15 @@ const ScheduleDetailView = ({ onBack, taskId }: Props) => {
           form={drilldownRowForm}
           layout="vertical"
         >
-          {(drilldown?.columns || []).map(column => (
+          {editableDrilldownColumns.map(column => (
             <AForm.Item
               key={column.key}
               label={column.title}
               name={column.key}
               rules={[
                 {
-                  required: true,
-                  message: t("page.dataSchedule.detailDrilldownFieldRequired", { fieldName: column.title })
+                  message: t('page.dataSchedule.detailDrilldownFieldRequired', { fieldName: column.title }),
+                  required: true
                 }
               ]}
             >
