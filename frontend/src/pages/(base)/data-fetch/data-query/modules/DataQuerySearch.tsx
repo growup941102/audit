@@ -1,9 +1,11 @@
 import { Button, Col, Input, Row, Select } from 'antd';
 
 type DataQuerySearchProps = {
+  exportLoading?: boolean;
   industries: Api.DataQuery.IndustryOption[];
   industryValue: string;
   loading?: boolean;
+  onExport: () => void;
   onIndustryChange: (value: string) => void;
   onProjectNameChange: (value: string) => void;
   onReset: () => void;
@@ -13,9 +15,11 @@ type DataQuerySearchProps = {
 
 const DataQuerySearch: FC<DataQuerySearchProps> = memo(
   ({
+    exportLoading = false,
     industries,
     industryValue,
     loading = false,
+    onExport,
     onIndustryChange,
     onProjectNameChange,
     onReset,
@@ -61,6 +65,13 @@ const DataQuerySearch: FC<DataQuerySearchProps> = memo(
             span={24}
           >
             <div className="flex justify-end gap-12px">
+              <Button
+                disabled={!industryValue}
+                loading={exportLoading}
+                onClick={onExport}
+              >
+                导出
+              </Button>
               <Button onClick={onReset}>重置</Button>
               <Button
                 disabled={!industryValue}

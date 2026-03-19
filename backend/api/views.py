@@ -298,6 +298,11 @@ DATA_QUERY_DEFAULT_SIZE = 10
 DATA_QUERY_MAX_SIZE = 50
 DATA_QUERY_DRILLDOWN_DEFAULT_SIZE = 10
 DATA_QUERY_DRILLDOWN_MAX_SIZE = 200
+DATA_QUERY_EXPORT_DRILLDOWN_FIELD_SET = {
+    'expert_info',
+    'opening_attendee_info',
+    'tender_agent_info',
+}
 
 PROJECT_STATUS_RUNNING_TASK_SET = {'RUNNING', 'CLAIMED', 'LOCKED'}
 PROJECT_STATUS_FAILED_TASK_SET = {'FAILED', 'CANCELLED', 'CANCEL'}
@@ -919,22 +924,12 @@ def _build_data_query_drilldown_payload(filters):
     }
 
 
-def _build_data_query_industry_pivot_payload(filters):
-    current = _to_int((filters or {}).get('current'), default=1)
-    size = _to_int((filters or {}).get('size'), default=DATA_QUERY_DEFAULT_SIZE)
-    industry = _to_str((filters or {}).get('industry'))
-    project_name = _to_str((filters or {}).get('projectName'))
-
-    all_projects = _fetch_data_query_projects_by_industry(industry, project_name)
-    total = len(all_projects)
-    start_idx = max(0, (current - 1) * size)
-    end_idx = start_idx + size
-    paged_projects = all_projects[start_idx:end_idx]
-
+def _build_data_query_pivot_columns_and_records(project_rows, industry):
     dynamic_field_keys = []
     dynamic_field_set = set()
     records = []
-    for project_row in paged_projects:
+
+    for project_row in (project_rows or []):
         project_field_value_map = _build_data_query_project_field_value_map(project_row, industry)
         record = {
             'projectId': _to_str(project_row.get('projectId')),
@@ -957,6 +952,23 @@ def _build_data_query_industry_pivot_payload(filters):
     columns = [{'fixed': 'left', 'key': 'projectName', 'title': '项目名称'}]
     columns.extend([{'key': field_name, 'title': field_name} for field_name in dynamic_field_keys])
 
+    return columns, records
+
+
+def _build_data_query_industry_pivot_payload(filters):
+    current = _to_int((filters or {}).get('current'), default=1)
+    size = _to_int((filters or {}).get('size'), default=DATA_QUERY_DEFAULT_SIZE)
+    industry = _to_str((filters or {}).get('industry'))
+    project_name = _to_str((filters or {}).get('projectName'))
+
+    all_projects = _fetch_data_query_projects_by_industry(industry, project_name)
+    total = len(all_projects)
+    start_idx = max(0, (current - 1) * size)
+    end_idx = start_idx + size
+    paged_projects = all_projects[start_idx:end_idx]
+
+    columns, records = _build_data_query_pivot_columns_and_records(paged_projects, industry)
+
     return {
         'columns': columns,
         'current': current,
@@ -964,6 +976,109 @@ def _build_data_query_industry_pivot_payload(filters):
         'size': size,
         'total': total,
     }
+
+
+def _build_data_query_export_binary(filters):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.worksheet.hyperlink import Hyperlink
+    except Exception as exc:
+        logger.exception('openpyxl import failed when export data query pivot: %s', exc)
+        raise
+
+    industry = _to_str((filters or {}).get('industry'))
+    project_name = _to_str((filters or {}).get('projectName'))
+    config = _get_data_schedule_industry_table_config(industry) or {}
+    all_projects = _fetch_data_query_projects_by_industry(industry, project_name)
+    columns, records = _build_data_query_pivot_columns_and_records(all_projects, industry)
+
+    workbook = Workbook()
+    used_sheet_names = set()
+    sheet = workbook.active
+    sheet.title = _safe_excel_sheet_name('数据查询', used_sheet_names)
+    sheet.freeze_panes = 'A2'
+
+    sheet.append([_to_str(column.get('title')) or _to_str(column.get('key')) for column in columns])
+
+    drilldown_sheet_map = {}
+    for record in records:
+        project_id = _to_str(record.get('projectId'))
+        project_name_text = _to_str(record.get('projectName')) or project_id
+        if not project_id:
+            continue
+
+        for column in columns:
+            column_key = _to_str(column.get('key'))
+            field_key = _normalize_data_query_drilldown_field_key(column_key, config)
+            if field_key not in DATA_QUERY_EXPORT_DRILLDOWN_FIELD_SET:
+                continue
+
+            map_key = (project_id, column_key)
+            if map_key in drilldown_sheet_map:
+                continue
+
+            try:
+                drilldown_payload = _build_data_query_drilldown_payload(
+                    {
+                        'current': 1,
+                        'fieldKey': field_key,
+                        'industry': industry,
+                        'projectId': project_id,
+                        'size': DATA_QUERY_DRILLDOWN_MAX_SIZE,
+                    }
+                )
+            except Exception:
+                continue
+
+            drilldown_columns = drilldown_payload.get('columns') or []
+            drilldown_records = drilldown_payload.get('records') or []
+            drilldown_title = _to_str(drilldown_payload.get('title')) or _to_str(column.get('title')) or column_key
+            sheet_name = _safe_excel_sheet_name(f'{project_name_text}_{drilldown_title}', used_sheet_names)
+            drilldown_sheet_map[map_key] = sheet_name
+
+            drilldown_sheet = workbook.create_sheet(sheet_name)
+            drilldown_sheet.append([_to_str(item.get('title')) or _to_str(item.get('key')) for item in drilldown_columns])
+            for drilldown_row in drilldown_records:
+                row_values = []
+                for drilldown_column in drilldown_columns:
+                    drilldown_column_key = _to_str(drilldown_column.get('key'))
+                    row_values.append(_to_excel_cell_value(drilldown_row.get(drilldown_column_key)))
+                drilldown_sheet.append(row_values)
+            drilldown_sheet.freeze_panes = 'A2'
+            _style_data_schedule_drilldown_sheet(drilldown_sheet)
+
+    for row_index, record in enumerate(records, start=2):
+        row_values = []
+        project_id = _to_str(record.get('projectId'))
+        for column in columns:
+            column_key = _to_str(column.get('key'))
+            map_key = (project_id, column_key)
+            if map_key in drilldown_sheet_map:
+                row_values.append('查看')
+            else:
+                row_values.append(_to_excel_cell_value(record.get(column_key)))
+        sheet.append(row_values)
+
+        for col_index, column in enumerate(columns, start=1):
+            column_key = _to_str(column.get('key'))
+            map_key = (project_id, column_key)
+            if map_key not in drilldown_sheet_map:
+                continue
+            link_cell = sheet.cell(row=row_index, column=col_index)
+            link_cell.value = '查看'
+            link_cell.hyperlink = Hyperlink(
+                ref=link_cell.coordinate,
+                location=_build_excel_internal_link(drilldown_sheet_map[map_key], 'A1').lstrip('#'),
+                display='查看'
+            )
+
+    _style_data_query_pivot_export_sheet(sheet)
+
+    output = io.BytesIO()
+    workbook.save(output)
+    workbook.close()
+    output.seek(0)
+    return output.getvalue()
 
 
 def _table_exists(table_name):
@@ -3784,7 +3899,6 @@ def _style_data_schedule_field_sheet(sheet):
     sheet.column_dimensions['A'].width = 26
     sheet.column_dimensions['B'].width = 56
     sheet.column_dimensions['C'].width = 14
-    sheet.column_dimensions['D'].width = 12
 
     thin_border = Border(
         left=Side(style='thin', color='E5E7EB'),
@@ -3798,7 +3912,7 @@ def _style_data_schedule_field_sheet(sheet):
     center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
     left_align = Alignment(horizontal='left', vertical='center', wrap_text=True)
 
-    for column in range(1, 5):
+    for column in range(1, 4):
         cell = sheet.cell(row=1, column=column)
         cell.fill = header_fill
         cell.font = header_font
@@ -3806,7 +3920,7 @@ def _style_data_schedule_field_sheet(sheet):
         cell.border = thin_border
 
     for row in range(2, sheet.max_row + 1):
-        for column in range(1, 5):
+        for column in range(1, 4):
             cell = sheet.cell(row=row, column=column)
             cell.font = body_font
             cell.border = thin_border
@@ -3821,15 +3935,12 @@ def _style_data_schedule_field_sheet(sheet):
             status_cell.fill = PatternFill(fill_type='solid', fgColor='FDECEA')
             status_cell.font = Font(name='Microsoft YaHei', bold=True, color='B42318')
 
-        action_cell = sheet.cell(row=row, column=4)
-        action_cell.fill = PatternFill(fill_type='solid', fgColor='F8FAFC')
-
         value_cell = sheet.cell(row=row, column=2)
         if str(value_cell.value or '') == '查看':
             value_cell.font = Font(name='Microsoft YaHei', color='0563C1', underline='single')
             value_cell.fill = PatternFill(fill_type='solid', fgColor='EEF6FF')
 
-    sheet.auto_filter.ref = f'A1:D{max(1, sheet.max_row)}'
+    sheet.auto_filter.ref = f'A1:C{max(1, sheet.max_row)}'
     sheet.sheet_view.showGridLines = False
 
 
@@ -3848,6 +3959,7 @@ def _style_data_schedule_drilldown_sheet(sheet):
     body_font = Font(name='Microsoft YaHei', color='111827')
     center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
     left_align = Alignment(horizontal='left', vertical='center', wrap_text=True)
+    has_action_column = str(sheet.cell(row=1, column=sheet.max_column).value or '') == '操作'
 
     for column in range(1, sheet.max_column + 1):
         cell = sheet.cell(row=1, column=column)
@@ -3861,7 +3973,7 @@ def _style_data_schedule_drilldown_sheet(sheet):
             cell = sheet.cell(row=row, column=column)
             cell.font = body_font
             cell.border = thin_border
-            cell.alignment = left_align if column < sheet.max_column else center_align
+            cell.alignment = center_align if has_action_column and column == sheet.max_column else left_align
 
     for column in range(1, sheet.max_column + 1):
         max_length = 0
@@ -3951,6 +4063,54 @@ def _style_data_schedule_log_sheet(sheet, data_start_row=13):
     sheet.sheet_view.showGridLines = False
 
 
+def _style_data_query_pivot_export_sheet(sheet):
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    thin_border = Border(
+        left=Side(style='thin', color='E5E7EB'),
+        right=Side(style='thin', color='E5E7EB'),
+        top=Side(style='thin', color='E5E7EB'),
+        bottom=Side(style='thin', color='E5E7EB')
+    )
+    header_fill = PatternFill(fill_type='solid', fgColor='1F4E78')
+    header_font = Font(name='Microsoft YaHei', bold=True, color='FFFFFF')
+    body_font = Font(name='Microsoft YaHei', color='111827')
+    link_font = Font(name='Microsoft YaHei', color='0563C1', underline='single')
+    center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    left_align = Alignment(horizontal='left', vertical='center', wrap_text=True)
+
+    for column in range(1, sheet.max_column + 1):
+        cell = sheet.cell(row=1, column=column)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center_align
+        cell.border = thin_border
+
+    for row in range(2, sheet.max_row + 1):
+        for column in range(1, sheet.max_column + 1):
+            cell = sheet.cell(row=row, column=column)
+            cell.font = body_font
+            cell.border = thin_border
+            cell.alignment = left_align if column == 1 else center_align
+
+            if str(cell.value or '') == '查看':
+                cell.font = link_font
+                cell.fill = PatternFill(fill_type='solid', fgColor='EEF6FF')
+
+    for column in range(1, sheet.max_column + 1):
+        max_length = 0
+        for row in range(1, min(sheet.max_row, 200) + 1):
+            value = sheet.cell(row=row, column=column).value
+            if value is None:
+                continue
+            max_length = max(max_length, len(str(value)))
+        sheet.column_dimensions[get_column_letter(column)].width = min(max(max_length + 4, 14), 48)
+
+    sheet.auto_filter.ref = f'A1:{get_column_letter(sheet.max_column)}{max(1, sheet.max_row)}'
+    sheet.sheet_view.showGridLines = False
+
+
 def _normalize_data_schedule_scope(raw_scope):
     scope = str(raw_scope or DATA_SCHEDULE_SCOPE_ALL).strip().lower()
     if not scope:
@@ -4019,7 +4179,7 @@ def _build_data_schedule_export_binary(task_id, scope):
         summary_sheet.append(list(row))
 
     field_sheet = workbook.create_sheet(_safe_excel_sheet_name(f'字段详情_{scope}', used_sheet_names))
-    field_sheet.append(['字段名称', '字段内容', '状态', '操作'])
+    field_sheet.append(['字段名称', '字段内容', '状态'])
 
     drilldown_sheet_map = {}
     for field in filtered_fields:
@@ -4033,10 +4193,9 @@ def _build_data_schedule_export_binary(task_id, scope):
         drilldown_sheet_map[field_key] = sheet_name
         drilldown_sheet = workbook.create_sheet(sheet_name)
         columns = drilldown_payload.get('columns') or []
-        drilldown_sheet.append([col.get('title') or col.get('key') or '' for col in columns] + ['操作'])
+        drilldown_sheet.append([col.get('title') or col.get('key') or '' for col in columns])
         for row in drilldown_payload.get('records') or []:
             row_values = [_to_excel_cell_value(row.get(col.get('key') or '', '--')) for col in columns]
-            row_values.append('只读')
             drilldown_sheet.append(row_values)
         drilldown_sheet.freeze_panes = 'A2'
         _style_data_schedule_drilldown_sheet(drilldown_sheet)
@@ -4053,8 +4212,7 @@ def _build_data_schedule_export_binary(task_id, scope):
         field_sheet.append([
             _to_excel_cell_value(field.get('fieldName') or ''),
             _to_excel_cell_value(field.get('fieldValueDisplay') or '--'),
-            _to_excel_cell_value(status_text),
-            '查看'
+            _to_excel_cell_value(status_text)
         ])
 
         field_key = field.get('fieldKey') or ''
@@ -5234,6 +5392,50 @@ def get_data_query_industry_pivot(request):
             ERROR_CODE_INVALID_PARAMS,
             status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='导出行业维度项目字段透视列表（xlsx）',
+    manual_parameters=[
+        openapi.Parameter('industry', openapi.IN_QUERY, description='项目行业（必填，支持 SW/JS）', type=openapi.TYPE_STRING),
+        openapi.Parameter('projectName', openapi.IN_QUERY, description='项目名称关键字（可选）', type=openapi.TYPE_STRING),
+    ],
+    responses={200: '导出成功', 400: '参数错误', 500: '导出失败', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def export_data_query_industry_pivot(request):
+    filters, err_msg = _parse_data_query_industry_pivot_filters(request)
+    if err_msg:
+        return error_response(err_msg, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    try:
+        binary = _build_data_query_export_binary(filters)
+    except Exception as exc:
+        logger.exception('build data query export failed: %s', exc)
+        if isinstance(exc, (ImportError, ModuleNotFoundError)):
+            return error_response(
+                '导出失败：Excel 导出依赖缺失，请检查 openpyxl 安装',
+                ERROR_CODE_INVALID_PARAMS,
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        return error_response('导出失败，请稍后重试', ERROR_CODE_INVALID_PARAMS, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    industry = _to_str(filters.get('industry')) or 'unknown'
+    project_name = _to_str(filters.get('projectName'))
+    safe_project_name = re.sub(r'[\\/:*?"<>|]+', '_', project_name).strip('_')
+    file_suffix = datetime.now().strftime('%Y%m%d%H%M%S')
+    if safe_project_name:
+        filename = quote(f'data-query-{industry}-{safe_project_name}-{file_suffix}.xlsx')
+    else:
+        filename = quote(f'data-query-{industry}-{file_suffix}.xlsx')
+    response = HttpResponse(
+        binary,
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = f"attachment; filename*=UTF-8''{filename}"
+    return response
 
 
 @swagger_auto_schema(

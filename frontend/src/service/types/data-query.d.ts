@@ -29,6 +29,8 @@ declare namespace Api {
       size?: number;
     };
 
+    type IndustryPivotExportParams = Pick<IndustryPivotParams, 'industry' | 'projectName'>;
+
     type IndustryPivotResult = Common.PaginatingQueryRecord<IndustryPivotRecord> & {
       columns: IndustryPivotColumn[];
     };

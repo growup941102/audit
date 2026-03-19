@@ -31,6 +31,11 @@ urlpatterns = [
         name='get_data_query_industry_pivot'
     ),
     path(
+        'data-query/industry-pivot/export/',
+        views.export_data_query_industry_pivot,
+        name='export_data_query_industry_pivot'
+    ),
+    path(
         'data-query/drilldown/',
         views.get_data_query_drilldown,
         name='get_data_query_drilldown'

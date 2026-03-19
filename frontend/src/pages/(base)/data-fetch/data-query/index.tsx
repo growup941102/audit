@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import { fetchDataQueryIndustryPivotExport } from '@/service/api';
 import { useDataQueryDrilldown, useDataQueryIndustries, useDataQueryIndustryPivot } from '@/service/hooks';
 
 import DataQueryDrilldownModal from './modules/DataQueryDrilldownModal';
@@ -41,6 +42,7 @@ const DataQuery = () => {
   const [formProjectName, setFormProjectName] = useState('');
   const [queryParams, setQueryParams] = useState<Api.DataQuery.IndustryPivotParams | null>(null);
   const [drilldownState, setDrilldownState] = useState<DrilldownState | null>(null);
+  const [exportLoading, setExportLoading] = useState(false);
 
   useEffect(() => {
     if (formIndustry || !industries.length) {
@@ -157,6 +159,36 @@ const DataQuery = () => {
     setDrilldownState(null);
   }
 
+  async function handleExport() {
+    const industry = queryParams?.industry || formIndustry;
+    if (!industry) {
+      window.$message?.warning('请先选择项目行业');
+      return;
+    }
+
+    try {
+      setExportLoading(true);
+      const result = await fetchDataQueryIndustryPivotExport({
+        industry,
+        projectName: queryParams?.projectName ?? formProjectName.trim()
+      });
+      const downloadUrl = URL.createObjectURL(result.blob);
+      const anchor = document.createElement('a');
+      anchor.download = result.fileName;
+      anchor.href = downloadUrl;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(downloadUrl);
+      window.$message?.success('导出成功');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '导出失败，请稍后重试';
+      window.$message?.error(message);
+    } finally {
+      setExportLoading(false);
+    }
+  }
+
   return (
     <ASpace
       className="w-full"
@@ -164,10 +196,12 @@ const DataQuery = () => {
       size={[16, 16]}
     >
       <DataQuerySearch
+        exportLoading={exportLoading}
         industries={industries}
         industryValue={formIndustry}
         loading={industriesQuery.isLoading}
         projectNameValue={formProjectName}
+        onExport={handleExport}
         onIndustryChange={handleIndustryChange}
         onProjectNameChange={setFormProjectName}
         onReset={handleReset}
