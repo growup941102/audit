@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { TableHeaderOperation, useTable, useTableOperate } from '@/features/table';
-import { operateDataScheduleTasks } from '@/service/api';
+import { createDataScheduleTasksByRetry, operateDataScheduleTasks } from '@/service/api';
 
 import ScheduleCreateView from './modules/ScheduleCreateView';
 import ScheduleDetailView from './modules/ScheduleDetailView';
@@ -44,7 +44,6 @@ const DataSchedule = () => {
   const { t } = useTranslation();
   const nav = useNavigate();
   const [searchParams] = useSearchParams();
-  const isCreateMode = searchParams.get('mode') === 'add';
   const isDetailMode = searchParams.get('mode') === 'detail';
   const detailTaskId = searchParams.get('taskId') || '';
   const incomingTaskStatus = Array.from(
@@ -61,7 +60,10 @@ const DataSchedule = () => {
   const scrollY = wrapperSize?.height ? wrapperSize.height - 55 : undefined;
 
   const isMobile = useMobile();
-  const [logModalTask, setLogModalTask] = useState<{ projectId: string; projectName: string; taskId: string } | null>(null);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [logModalTask, setLogModalTask] = useState<{ projectId: string; projectName: string; taskId: string } | null>(
+    null
+  );
   const hasAppliedIncomingTaskStatusRef = useRef(false);
 
   const { columnChecks, data, run, searchProps, setColumnChecks, tableProps } = useTable({
@@ -211,7 +213,7 @@ const DataSchedule = () => {
 
   useEffect(() => {
     if (hasAppliedIncomingTaskStatusRef.current) return;
-    if (isCreateMode || isDetailMode) return;
+    if (isDetailMode) return;
     if (incomingTaskStatus.length === 0) return;
 
     hasAppliedIncomingTaskStatusRef.current = true;
@@ -219,7 +221,7 @@ const DataSchedule = () => {
     run().catch(() => {
       // keep page render stable if preset filters fail validation unexpectedly
     });
-  }, [incomingTaskStatus, isCreateMode, isDetailMode, run, searchProps.form]);
+  }, [incomingTaskStatus, isDetailMode, run, searchProps.form]);
 
   // Custom reset: clear all form fields (including createTime etc.) then trigger search
   function handleReset() {
@@ -232,7 +234,7 @@ const DataSchedule = () => {
   });
 
   function goCreateSchedule() {
-    nav('/data-fetch/data-schedule?mode=add');
+    setCreateModalOpen(true);
   }
 
   function goDetailSchedule(taskId: string) {
@@ -243,8 +245,11 @@ const DataSchedule = () => {
     nav('/data-fetch/data-schedule');
   }
 
-  function handleCreateSchedule() {
-    window.$message?.info('暂未接入后端接口，当前仅为界面展示');
+  async function handleCreateSchedule(projectIds: string[]) {
+    await createDataScheduleTasksByRetry({ projectIds });
+    window.$message?.success('新增任务已提交');
+    setCreateModalOpen(false);
+    await run(false);
   }
 
   function getSelectedTaskIds() {
@@ -355,15 +360,6 @@ const DataSchedule = () => {
     </ASpace>
   );
 
-  if (isCreateMode) {
-    return (
-      <ScheduleCreateView
-        onCancel={backToScheduleList}
-        onCreate={handleCreateSchedule}
-      />
-    );
-  }
-
   if (isDetailMode && detailTaskId) {
     return (
       <ScheduleDetailView
@@ -405,9 +401,9 @@ const DataSchedule = () => {
             disabledDelete={checkedRowKeys.length === 0}
             loading={tableProps.loading}
             prefix={batchButtons}
+            refresh={triggerRefresh}
             setColumnChecks={setColumnChecks}
             onDelete={triggerBatchDelete}
-            refresh={triggerRefresh}
           />
         }
       >
@@ -431,6 +427,12 @@ const DataSchedule = () => {
         projectName={logModalTask?.projectName}
         taskId={logModalTask?.taskId || ''}
         onCancel={() => setLogModalTask(null)}
+      />
+
+      <ScheduleCreateView
+        open={createModalOpen}
+        onCancel={() => setCreateModalOpen(false)}
+        onCreate={handleCreateSchedule}
       />
     </div>
   );

@@ -18,10 +18,13 @@ function parseFileNameFromDisposition(disposition: string, fallback: string) {
   return parsedName || fallback;
 }
 
+function buildRequestURL(rawBase: string, url: string) {
+  const baseURL = (rawBase || '').replace(/\/$/, '');
+  return `${baseURL}${url}`;
+}
+
 async function fetchDataScheduleBlobFile(url: string, fallbackFileName: string) {
-  const rawBase = globalConfig.serviceBaseURL || '';
-  const baseURL = rawBase.replace(/\/$/, '');
-  const requestURL = `${baseURL}${url}`;
+  const requestURL = buildRequestURL(globalConfig.serviceBaseURL || '', url);
   const authorization = getAuthorization();
 
   const response = await fetch(requestURL, {
@@ -69,6 +72,23 @@ function buildDataScheduleLogQuery(params: Omit<Api.DataSchedule.TaskLogListPara
   return query;
 }
 
+function buildDataScheduleRetryCreatePayload(
+  params: Api.DataSchedule.RetryCreateTaskParams
+): Api.DataSchedule.RetryCreateTaskPayload {
+  return {
+    fileIds: [],
+    force: true,
+    mode: 'pipeline',
+    onlyStep: false,
+    payload: {},
+    preempt: true,
+    priority: 838,
+    projectIds: params.projectIds,
+    stepNo: 1,
+    subStep: ''
+  };
+}
+
 /** get data schedule creator options */
 export function fetchDataScheduleCreatorOptions(keyword?: string) {
   return request<Api.DataSchedule.CreatorOption[]>({
@@ -102,6 +122,43 @@ export function operateDataScheduleTasks(params: Api.DataSchedule.TaskActionPara
     method: 'post',
     url: DATA_SCHEDULE_URLS.OPERATE_TASKS
   });
+}
+
+/** create schedule tasks by retry admin api */
+export async function createDataScheduleTasksByRetry(params: Api.DataSchedule.RetryCreateTaskParams) {
+  const normalizedProjectIds = (params.projectIds || []).map(item => item.trim()).filter(Boolean);
+  if (!normalizedProjectIds.length) {
+    throw new Error('projectIds 不能为空');
+  }
+
+  const retryAdminBaseURL = globalConfig.serviceOtherBaseURL.retryAdmin || '';
+  if (!retryAdminBaseURL) {
+    throw new Error('未配置 retryAdmin 代理地址，请检查 VITE_OTHER_SERVICE_BASE_URL');
+  }
+
+  const requestURL = buildRequestURL(retryAdminBaseURL, DATA_SCHEDULE_URLS.ADMIN_RETRY);
+  const authorization = getAuthorization();
+  const payload = buildDataScheduleRetryCreatePayload({ projectIds: normalizedProjectIds });
+  const response = await fetch(requestURL, {
+    body: JSON.stringify(payload),
+    headers: {
+      'Content-Type': 'application/json',
+      ...(authorization ? { Authorization: authorization } : {})
+    },
+    method: 'POST'
+  });
+
+  if (!response.ok) {
+    throw new Error(`新增任务失败（${response.status}）`);
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    const json = (await response.json()) as Api.DataSchedule.RetryCreateTaskResult;
+    return json;
+  }
+
+  return { raw: await response.text() };
 }
 
 /** get extract result summary */

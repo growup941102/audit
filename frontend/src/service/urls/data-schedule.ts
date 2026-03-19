@@ -1,6 +1,7 @@
 /** Data schedule module URLs */
 
 export const DATA_SCHEDULE_URLS = {
+  ADMIN_RETRY: '/admin/retry',
   CREATE_EXTRACT_DRILLDOWN_ROW: (taskId: string) =>
     `/api/data-schedule/tasks/${encodeURIComponent(taskId)}/extract-result/drilldown/rows/`,
   DELETE_EXTRACT_DRILLDOWN_ROW: (taskId: string, rowId: number) =>

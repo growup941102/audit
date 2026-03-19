@@ -1,35 +1,13 @@
-export interface DataCatalogItem {
-  description: string;
-  id: string;
-  name: string;
-}
+export type SelectableProjectItem = Api.DataSchedule.SelectDataProject;
 
-export type ProjectNodeType = 'file' | 'folder';
-
-export interface ProjectNodeItem {
-  catalogId: string;
-  children?: ProjectNodeItem[];
-  fileExt?: string;
-  fileSizeLabel?: string;
-  id: string;
-  itemCount?: number;
-  name: string;
-  parentId: string | null;
-  type: ProjectNodeType;
-}
-
-export function flattenProjectNodes(nodes: ProjectNodeItem[]): ProjectNodeItem[] {
-  const result: ProjectNodeItem[] = [];
-
-  function walk(items: ProjectNodeItem[]) {
-    items.forEach(item => {
-      result.push(item);
-      if (item.children?.length) {
-        walk(item.children);
-      }
-    });
+export function filterSelectableProjects(projects: SelectableProjectItem[], keyword: string) {
+  const normalizedKeyword = keyword.trim().toLowerCase();
+  if (!normalizedKeyword) {
+    return projects;
   }
 
-  walk(nodes);
-  return result;
+  return projects.filter(project => {
+    const values = [project.projectName, project.projectId, project.industry];
+    return values.some(value => value.toLowerCase().includes(normalizedKeyword));
+  });
 }

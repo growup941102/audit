@@ -403,8 +403,8 @@ declare namespace App {
             detailDataDetail: string;
             detailDeleteRowSuccess: string;
             detailDownload: string;
-            detailDownloadSuccess: string;
             detailDownloading: string;
+            detailDownloadSuccess: string;
             detailDrilldownCreateRowTitle: string;
             detailDrilldownEditRowTitle: string;
             detailDrilldownFieldRequired: string;
@@ -425,6 +425,13 @@ declare namespace App {
             detailUpdateRowSuccess: string;
             detailView: string;
             executionLog: string;
+            form: {
+              creator: string;
+              matchRangeMax: string;
+              matchRangeMin: string;
+              projectName: string;
+              status: string;
+            };
             logComponent: string;
             logCountLabel: string;
             logCountUnit: string;
@@ -445,13 +452,6 @@ declare namespace App {
             logTime: string;
             logTitle: string;
             logTotalLabel: string;
-            form: {
-              creator: string;
-              matchRangeMax: string;
-              matchRangeMin: string;
-              projectName: string;
-              status: string;
-            };
             matchRange: string;
             more: string;
             newTask: string;
@@ -713,6 +713,34 @@ declare namespace App {
               explain: string;
             };
           };
+          systemSettings: {
+            userManage: {
+              addUser: string;
+              batchDeleteFailed: string;
+              batchDeleteSuccess: string;
+              createTime: string;
+              editUser: string;
+              form: {
+                confirmPassword: string;
+                invalidEmail: string;
+                password: string;
+                passwordEdit: string;
+                passwordFirst: string;
+                passwordNotMatch: string;
+                passwordRule: string;
+                userEmail: string;
+                userName: string;
+                userStatus: string;
+              };
+              title: string;
+              updateTime: string;
+              userConfirmPassword: string;
+              userEmail: string;
+              userName: string;
+              userPassword: string;
+              userStatus: string;
+            };
+          };
           websiteSettings: {
             favicon: string;
             form: {
@@ -731,34 +759,6 @@ declare namespace App {
               text: string;
             };
             websiteName: string;
-          };
-          systemSettings: {
-            userManage: {
-              addUser: string;
-              batchDeleteFailed: string;
-              batchDeleteSuccess: string;
-              createTime: string;
-              editUser: string;
-              form: {
-                confirmPassword: string;
-                invalidEmail: string;
-                password: string;
-                passwordEdit: string;
-                passwordFirst: string;
-                passwordRule: string;
-                passwordNotMatch: string;
-                userEmail: string;
-                userName: string;
-                userStatus: string;
-              };
-              title: string;
-              updateTime: string;
-              userConfirmPassword: string;
-              userEmail: string;
-              userName: string;
-              userPassword: string;
-              userStatus: string;
-            };
           };
         };
         request: {
@@ -870,7 +870,7 @@ declare namespace App {
   /** Service namespace */
   namespace Service {
     /** Other baseURL key */
-    type OtherBaseURLKey = 'demo';
+    type OtherBaseURLKey = 'demo' | 'retryAdmin';
 
     interface ServiceConfigItem {
       /** The backend service base url */

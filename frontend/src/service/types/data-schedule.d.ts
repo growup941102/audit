@@ -20,27 +20,14 @@ declare namespace Api {
       value: string;
     };
 
-    type SelectDataCatalog = {
-      description: string;
-      id: string;
-      name: string;
-    };
-
-    type SelectDataNode = {
-      catalogId: string;
-      children?: SelectDataNode[];
-      fileExt?: string;
-      fileSizeLabel?: string;
-      id: string;
-      itemCount?: number;
-      name: string;
-      parentId: string | null;
-      type: 'file' | 'folder';
+    type SelectDataProject = {
+      industry: string;
+      projectId: string;
+      projectName: string;
     };
 
     type SelectDataPayload = {
-      catalogs: SelectDataCatalog[];
-      projectTreeByCatalogId: Record<string, SelectDataNode[]>;
+      projects: SelectDataProject[];
     };
 
     type TaskSummary = {
@@ -99,6 +86,25 @@ declare namespace Api {
       total?: number;
       updated: number;
     };
+
+    type RetryCreateTaskParams = {
+      projectIds: string[];
+    };
+
+    type RetryCreateTaskPayload = {
+      fileIds: string[];
+      force: boolean;
+      mode: 'pipeline';
+      onlyStep: boolean;
+      payload: Record<string, unknown>;
+      preempt: boolean;
+      priority: number;
+      projectIds: string[];
+      stepNo: number;
+      subStep: string;
+    };
+
+    type RetryCreateTaskResult = Record<string, unknown>;
 
     type FieldRecord = {
       canDrilldown: boolean;

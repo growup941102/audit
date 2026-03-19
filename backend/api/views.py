@@ -517,50 +517,78 @@ def _fetch_data_schedule_project_root_paths():
 def _build_data_schedule_select_data_project_where_clause(table_alias='p'):
     valid_project_where_clause = _build_valid_project_where_clause(table_alias)
     alias_prefix = f'{table_alias}.' if table_alias else ''
-    reverse_conditions = []
-
-    if _table_exists('c_r_cm_file_prepare'):
-        reverse_conditions.append(
-            "NOT EXISTS ("
-            "SELECT 1 FROM c_r_cm_file_prepare f "
-            f"WHERE f.project_id = {alias_prefix}project_id"
-            ")"
-        )
-    if _table_exists('c_r_cm_task_item_queue'):
-        reverse_conditions.append(
-            "NOT EXISTS ("
-            "SELECT 1 FROM c_r_cm_task_item_queue q "
-            f"WHERE q.project_id = {alias_prefix}project_id "
-            "AND q.file_id LIKE 'PROJECT:%'"
-            ")"
-        )
-
-    if not reverse_conditions:
+    has_file_prepare_table = _table_exists('c_r_cm_file_prepare')
+    has_task_queue_table = _table_exists('c_r_cm_task_item_queue')
+    if not has_file_prepare_table or not has_task_queue_table:
         return valid_project_where_clause
 
+    reverse_conditions = [
+        "("
+        "NOT EXISTS ("
+        "SELECT 1 FROM c_r_cm_file_prepare f "
+        f"WHERE f.project_id = {alias_prefix}project_id"
+        ")"
+        ")",
+        "("
+        "EXISTS ("
+        "SELECT 1 FROM c_r_cm_file_prepare f "
+        f"WHERE f.project_id = {alias_prefix}project_id"
+        ") "
+        "AND NOT EXISTS ("
+        "SELECT 1 FROM c_r_cm_task_item_queue q "
+        f"WHERE q.project_id = {alias_prefix}project_id "
+        "AND q.file_id LIKE 'PROJECT:%'"
+        ")"
+        ")",
+    ]
     reverse_where_clause = '(' + ' OR '.join(reverse_conditions) + ')'
     if valid_project_where_clause:
         return f'{valid_project_where_clause} AND {reverse_where_clause}'
     return reverse_where_clause
 
 
-def _build_data_schedule_select_data_payload():
-    rows = _fetch_data_schedule_project_root_paths()
-    root_paths = [_to_str(item.get('rootPath')) for item in rows]
-    tree_nodes = _build_data_schedule_tree_nodes(root_paths)
+def _fetch_data_schedule_select_data_projects():
+    if not _table_exists('c_r_cm_project'):
+        return []
+    if not _table_has_column('c_r_cm_project', 'industry'):
+        return []
 
-    return {
-        'catalogs': [
-            {
-                'description': '固定数据目录',
-                'id': DATA_SCHEDULE_SELECT_DATA_CATALOG_ID,
-                'name': DATA_SCHEDULE_SELECT_DATA_ROOT,
-            }
-        ],
-        'projectTreeByCatalogId': {
-            DATA_SCHEDULE_SELECT_DATA_CATALOG_ID: tree_nodes,
-        },
-    }
+    where_clause = _build_data_schedule_select_data_project_where_clause('p')
+    sql = (
+        "SELECT DISTINCT "
+        "p.project_id AS projectId, "
+        "p.project_name AS projectName, "
+        "TRIM(p.industry) AS industry "
+        "FROM c_r_cm_project p "
+        f"WHERE {where_clause} "
+        "ORDER BY UPPER(TRIM(COALESCE(p.project_name, p.project_id))) ASC, p.project_id ASC"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
+        return _dictfetchall(cursor)
+
+
+def _build_data_schedule_select_data_payload():
+    rows = _fetch_data_schedule_select_data_projects()
+    projects = []
+    seen_project_ids = set()
+    for row in rows:
+        project_id = _to_str(row.get('projectId'))
+        if not project_id or project_id in seen_project_ids:
+            continue
+
+        industry = _to_str(row.get('industry'))
+        if not industry:
+            continue
+
+        seen_project_ids.add(project_id)
+        projects.append({
+            'industry': industry,
+            'projectId': project_id,
+            'projectName': _to_str(row.get('projectName')) or project_id,
+        })
+
+    return {'projects': projects}
 
 
 def _fetch_data_query_industry_rows():
