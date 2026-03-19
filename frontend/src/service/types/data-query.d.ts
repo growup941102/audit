@@ -32,5 +32,35 @@ declare namespace Api {
     type IndustryPivotResult = Common.PaginatingQueryRecord<IndustryPivotRecord> & {
       columns: IndustryPivotColumn[];
     };
+
+    type DrilldownColumn = {
+      editable?: boolean;
+      key: string;
+      title: string;
+      width?: number;
+    };
+
+    type DrilldownActions = {
+      canCreate: boolean;
+      canDelete: boolean;
+      canEdit: boolean;
+    };
+
+    type DrilldownRecord = Record<string, string | number | boolean | null>;
+
+    type DrilldownParams = {
+      current?: number;
+      fieldKey: string;
+      industry: string;
+      projectId: string;
+      size?: number;
+    };
+
+    type DrilldownResult = Common.PaginatingQueryRecord<DrilldownRecord> & {
+      actions: DrilldownActions;
+      columns: DrilldownColumn[];
+      fieldKey: string;
+      title: string;
+    };
   }
 }

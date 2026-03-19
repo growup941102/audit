@@ -296,6 +296,8 @@ DATA_SCHEDULE_PROJECT_ROOT_PATH_COLUMN_CANDIDATES = (
 )
 DATA_QUERY_DEFAULT_SIZE = 10
 DATA_QUERY_MAX_SIZE = 50
+DATA_QUERY_DRILLDOWN_DEFAULT_SIZE = 10
+DATA_QUERY_DRILLDOWN_MAX_SIZE = 200
 
 PROJECT_STATUS_RUNNING_TASK_SET = {'RUNNING', 'CLAIMED', 'LOCKED'}
 PROJECT_STATUS_FAILED_TASK_SET = {'FAILED', 'CANCELLED', 'CANCEL'}
@@ -621,6 +623,39 @@ def _parse_data_query_industry_pivot_filters(request):
     }, ''
 
 
+def _parse_data_query_drilldown_filters(request):
+    query_params = request.query_params or {}
+    raw_project_id = _to_str(query_params.get('projectId'))
+    if not raw_project_id:
+        return None, 'projectId 参数不能为空'
+
+    raw_industry = query_params.get('industry')
+    if not _to_str(raw_industry):
+        return None, 'industry 参数不能为空'
+    industry = _normalize_data_schedule_detail_industry(raw_industry)
+    if not industry:
+        return None, 'industry 参数无效，仅支持 SW/JS'
+
+    raw_field_key = _to_str(query_params.get('fieldKey'))
+    if not raw_field_key:
+        return None, 'fieldKey 参数不能为空'
+
+    current = _parse_positive_int(query_params.get('current'), default=1, max_value=100000)
+    size = _parse_positive_int(
+        query_params.get('size'),
+        default=DATA_QUERY_DRILLDOWN_DEFAULT_SIZE,
+        max_value=DATA_QUERY_DRILLDOWN_MAX_SIZE
+    )
+
+    return {
+        'current': current,
+        'fieldKey': raw_field_key,
+        'industry': industry,
+        'projectId': raw_project_id,
+        'size': size,
+    }, ''
+
+
 def _fetch_data_query_project_relation_map(file_prepare_project_ids):
     normalized_project_ids = [_to_str(item) for item in (file_prepare_project_ids or []) if _to_str(item)]
     if not normalized_project_ids:
@@ -742,6 +777,118 @@ def _build_data_query_project_field_value_map(project_row, industry):
         values = field_values_map.get(field_name) or []
         flattened[field_name] = '；'.join(values) if values else '--'
     return flattened
+
+
+def _normalize_data_query_drilldown_field_key(raw_field_key, config):
+    field_key = _to_str(raw_field_key)
+    if not field_key:
+        return ''
+
+    expert_field_key = _to_str((config or {}).get('expertFieldKey'))
+    opening_attendee_field_key = _to_str((config or {}).get('openingAttendeeFieldKey'))
+    bid_submission_field_key = _to_str((config or {}).get('bidSubmissionFieldKey'))
+    alias_map = {
+        '招标代理机构': 'tender_agent_info',
+        '评标专家信息': expert_field_key,
+        '开标人员信息': opening_attendee_field_key,
+        '中标候选人公示': bid_submission_field_key,
+    }
+    mapped_field_key = _to_str(alias_map.get(field_key))
+    return mapped_field_key or field_key
+
+
+def _resolve_data_query_drilldown_table(field_key, config):
+    normalized_field_key = _to_str(field_key)
+    if not normalized_field_key:
+        return '', False
+
+    if normalized_field_key == 'tender_agent_info':
+        return _to_str((config or {}).get('tenderAgentTable')), True
+    if normalized_field_key == _to_str((config or {}).get('expertFieldKey')):
+        return _to_str((config or {}).get('expertTable')), False
+    if normalized_field_key == _to_str((config or {}).get('bidSubmissionFieldKey')):
+        return _to_str((config or {}).get('bidSubmissionTable')), False
+    if normalized_field_key == _to_str((config or {}).get('openingAttendeeFieldKey')):
+        return _to_str((config or {}).get('openingAttendeeTable')), False
+    return '', False
+
+
+def _build_data_query_drilldown_title(field_key, config):
+    normalized_field_key = _to_str(field_key)
+    if normalized_field_key == 'tender_agent_info':
+        return '字段详情 - 招标代理机构'
+    if normalized_field_key == _to_str((config or {}).get('expertFieldKey')):
+        return f"字段详情 - {_to_str((config or {}).get('expertFieldName')) or '评标专家信息'}"
+    if normalized_field_key == _to_str((config or {}).get('bidSubmissionFieldKey')):
+        return f"字段详情 - {_to_str((config or {}).get('bidSubmissionFieldName')) or '中标候选人公示'}"
+    if normalized_field_key == _to_str((config or {}).get('openingAttendeeFieldKey')):
+        return f"字段详情 - {_to_str((config or {}).get('openingAttendeeFieldName')) or '开标人员信息'}"
+    return f'字段详情 - {normalized_field_key}'
+
+
+def _to_readonly_data_query_drilldown_columns(columns):
+    readonly_columns = []
+    for column in (columns or []):
+        if not isinstance(column, dict):
+            continue
+        readonly_columns.append({
+            'editable': False,
+            'key': _to_str(column.get('key')),
+            'title': _to_str(column.get('title')),
+            'width': column.get('width'),
+        })
+    return readonly_columns
+
+
+def _build_data_query_drilldown_payload(filters):
+    project_id = _to_str((filters or {}).get('projectId'))
+    industry = _to_str((filters or {}).get('industry'))
+    raw_field_key = _to_str((filters or {}).get('fieldKey'))
+    current = _to_int((filters or {}).get('current'), default=1)
+    size = _to_int((filters or {}).get('size'), default=DATA_QUERY_DRILLDOWN_DEFAULT_SIZE)
+
+    config = _get_data_schedule_industry_table_config(industry)
+    if not config:
+        raise RuntimeError(f'暂不支持行业 {industry} 的详情查询')
+
+    relation_map = _fetch_data_query_project_relation_map([project_id])
+    kb_project_id = _to_str(relation_map.get(project_id))
+    if not kb_project_id:
+        raise ValueError('项目映射不存在')
+
+    context = {
+        'agentIds': set(),
+        'config': config,
+        'projectId': kb_project_id,
+        'sectionIds': set(),
+    }
+    # Initialize section/agent scopes used by tender-agent drilldown filtering.
+    _build_data_schedule_field_rows(context)
+
+    field_key = _normalize_data_query_drilldown_field_key(raw_field_key, config)
+    table_name, prefer_agent = _resolve_data_query_drilldown_table(field_key, config)
+    if not table_name:
+        raise ValueError('下钻字段不存在')
+
+    title = _build_data_query_drilldown_title(field_key, config)
+    payload = _build_data_schedule_drilldown_from_table(table_name, title, context, prefer_agent=prefer_agent)
+    all_records = payload.get('records') or []
+    paginated_data = _paginate_data_schedule_records(all_records, current, size)
+
+    return {
+        'actions': {
+            'canCreate': False,
+            'canDelete': False,
+            'canEdit': False,
+        },
+        'columns': _to_readonly_data_query_drilldown_columns(payload.get('columns') or []),
+        'current': paginated_data.get('current') or current,
+        'fieldKey': field_key,
+        'records': paginated_data.get('records') or [],
+        'size': paginated_data.get('size') or size,
+        'title': payload.get('title') or title,
+        'total': paginated_data.get('total') or 0,
+    }
 
 
 def _build_data_query_industry_pivot_payload(filters):
@@ -4928,6 +5075,46 @@ def get_data_query_industry_pivot(request):
         logger.exception('get data query industry pivot failed: %s', exc)
         return error_response(
             '数据查询列表加载失败，请检查数据库连接',
+            ERROR_CODE_INVALID_PARAMS,
+            status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description='获取数据查询字段下钻明细（只读）',
+    manual_parameters=[
+        openapi.Parameter('projectId', openapi.IN_QUERY, description='项目ID（必填）', type=openapi.TYPE_STRING),
+        openapi.Parameter('industry', openapi.IN_QUERY, description='项目行业（必填，支持 SW/JS）', type=openapi.TYPE_STRING),
+        openapi.Parameter(
+            'fieldKey',
+            openapi.IN_QUERY,
+            description='下钻字段 key（必填，支持 tender_agent_info/expert_info/opening_attendee_info）',
+            type=openapi.TYPE_STRING
+        ),
+        openapi.Parameter('current', openapi.IN_QUERY, description='页码，默认1', type=openapi.TYPE_INTEGER),
+        openapi.Parameter('size', openapi.IN_QUERY, description='每页条数，默认10，最大200', type=openapi.TYPE_INTEGER),
+    ],
+    responses={200: '获取成功', 400: '参数错误', 401: '未认证'}
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_data_query_drilldown(request):
+    filters, err_msg = _parse_data_query_drilldown_filters(request)
+    if err_msg:
+        return error_response(err_msg, ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+
+    try:
+        payload = _build_data_query_drilldown_payload(filters)
+        return success_response(payload, '获取成功')
+    except ValueError as exc:
+        return error_response(str(exc), ERROR_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+    except RuntimeError as exc:
+        return error_response(str(exc), ERROR_CODE_INVALID_PARAMS, status.HTTP_400_BAD_REQUEST)
+    except Exception as exc:
+        logger.exception('get data query drilldown failed: %s', exc)
+        return error_response(
+            '数据查询下钻加载失败，请检查数据库连接',
             ERROR_CODE_INVALID_PARAMS,
             status.HTTP_500_INTERNAL_SERVER_ERROR
         )

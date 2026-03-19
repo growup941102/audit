@@ -17,3 +17,12 @@ export function fetchDataQueryIndustryPivot(params: Api.DataQuery.IndustryPivotP
     url: DATA_QUERY_URLS.GET_INDUSTRY_PIVOT
   });
 }
+
+/** get data-query drilldown detail */
+export function fetchDataQueryDrilldown(params: Api.DataQuery.DrilldownParams) {
+  return request<Api.DataQuery.DrilldownResult>({
+    method: 'get',
+    params,
+    url: DATA_QUERY_URLS.GET_DRILLDOWN
+  });
+}

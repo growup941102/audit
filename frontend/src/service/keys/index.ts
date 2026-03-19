@@ -18,6 +18,7 @@ export const QUERY_KEYS = {
   },
   // Data Query
   DATA_QUERY: {
+    DRILLDOWN: (params: Api.DataQuery.DrilldownParams | null) => ['dataQuery', 'drilldown', params] as const,
     INDUSTRIES: ['dataQuery', 'industries'] as const,
     INDUSTRY_PIVOT: (params: Api.DataQuery.IndustryPivotParams | null) =>
       ['dataQuery', 'industryPivot', params] as const
