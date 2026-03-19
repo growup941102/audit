@@ -66,6 +66,7 @@ declare module "@soybean-react/vite-plugin-react-router" {
     "(base)_projects_[pid]_edit": "/projects/:pid/edit";
     "(base)_projects_[pid]_edit_[id]": "/projects/:pid/edit/:id";
     "(base)_system-settings": "/system-settings";
+    "(base)_system-settings_user-manage": "/system-settings/user-manage";
     "(base)_system-settings_watermark-settings": "/system-settings/watermark-settings";
     "(base)_system-settings_website-settings": "/system-settings/website-settings";
     "(base)_user-center": "/user-center";
@@ -184,6 +185,7 @@ declare module "@soybean-react/vite-plugin-react-router" {
     | "(base)_projects_[pid]"
     | "(base)_projects"
     | "(base)_system-settings"
+    | "(base)_system-settings_user-manage"
     | "(base)_system-settings_watermark-settings"
     | "(base)_system-settings_website-settings"
     | "(base)_user-center"

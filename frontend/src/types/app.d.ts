@@ -732,6 +732,34 @@ declare namespace App {
             };
             websiteName: string;
           };
+          systemSettings: {
+            userManage: {
+              addUser: string;
+              batchDeleteFailed: string;
+              batchDeleteSuccess: string;
+              createTime: string;
+              editUser: string;
+              form: {
+                confirmPassword: string;
+                invalidEmail: string;
+                password: string;
+                passwordEdit: string;
+                passwordFirst: string;
+                passwordRule: string;
+                passwordNotMatch: string;
+                userEmail: string;
+                userName: string;
+                userStatus: string;
+              };
+              title: string;
+              updateTime: string;
+              userConfirmPassword: string;
+              userEmail: string;
+              userName: string;
+              userPassword: string;
+              userStatus: string;
+            };
+          };
         };
         request: {
           logout: string;

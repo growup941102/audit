@@ -92,6 +92,15 @@ export function fetchDataScheduleTasks(params?: Api.DataSchedule.TaskListParams)
   });
 }
 
+/** operate data schedule tasks */
+export function operateDataScheduleTasks(params: Api.DataSchedule.TaskActionParams) {
+  return request<Api.DataSchedule.TaskActionResult>({
+    data: params,
+    method: 'post',
+    url: DATA_SCHEDULE_URLS.OPERATE_TASKS
+  });
+}
+
 /** get extract result summary */
 export function fetchDataScheduleExtractSummary(taskId: string) {
   return request<Api.DataSchedule.TaskSummary>({

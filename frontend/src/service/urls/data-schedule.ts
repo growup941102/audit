@@ -20,6 +20,7 @@ export const DATA_SCHEDULE_URLS = {
   GET_SELECT_DATA: '/api/data-schedule/select-data/',
   GET_TASK_DETAIL: (taskId: string) => `/api/data-schedule/tasks/${encodeURIComponent(taskId)}/detail/`,
   GET_TASK_LIST: '/api/data-schedule/tasks/',
+  OPERATE_TASKS: '/api/data-schedule/tasks/actions/',
   UPDATE_EXTRACT_DRILLDOWN_ROW: (taskId: string, rowId: number) =>
     `/api/data-schedule/tasks/${encodeURIComponent(taskId)}/extract-result/drilldown/rows/${rowId}/`,
   UPDATE_EXTRACT_FIELD: (taskId: string, fieldKey: string) =>

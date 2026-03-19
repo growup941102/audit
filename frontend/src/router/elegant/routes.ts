@@ -465,6 +465,15 @@ export const generatedRoutes: ElegantConstRoute[] = [
             },
             children: [
               {
+                matchedFiles: [null, '/src/pages/(base)/system-settings/user-manage/index.tsx', null, null],
+                name: '(base)_system-settings_user-manage',
+                path: '/system-settings/user-manage',
+                handle: {
+                  i18nKey: 'route.(base)_system-settings_user-manage',
+                  title: '(base)_system-settings_user-manage'
+                }
+              },
+              {
                 matchedFiles: [null, '/src/pages/(base)/system-settings/watermark-settings/index.tsx', null, null],
                 name: '(base)_system-settings_watermark-settings',
                 path: '/system-settings/watermark-settings',

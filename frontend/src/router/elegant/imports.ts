@@ -54,6 +54,7 @@ export const pages: Record<string, () => Promise<any>> = {
 "(base)_projects_[pid]": () => import("@/pages/(base)/projects/[pid]/index.tsx"),
 "(base)_projects": () => import("@/pages/(base)/projects/index.tsx"),
 "(base)_system-settings": () => import("@/pages/(base)/system-settings/index.tsx"),
+"(base)_system-settings_user-manage": () => import("@/pages/(base)/system-settings/user-manage/index.tsx"),
 "(base)_system-settings_watermark-settings": () => import("@/pages/(base)/system-settings/watermark-settings/index.tsx"),
 "(base)_system-settings_website-settings": () => import("@/pages/(base)/system-settings/website-settings/index.tsx"),
 "(base)_user-center": () => import("@/pages/(base)/user-center/index.tsx"),
