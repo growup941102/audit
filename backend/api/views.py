@@ -2127,6 +2127,25 @@ def _delete_data_schedule_queue_items(task_ids):
         return cursor.rowcount or 0
 
 
+def _delete_data_schedule_queue_items_by_project_ids(project_ids):
+    normalized_project_ids = [_to_str(item) for item in (project_ids or []) if _to_str(item)]
+    if not normalized_project_ids:
+        return 0
+
+    where_clause, params = _build_data_schedule_where_with_values('project_id', normalized_project_ids)
+    if where_clause is None:
+        return 0
+
+    sql = (
+        "DELETE FROM c_r_cm_task_item_queue "
+        f"WHERE {where_clause} "
+        "AND file_id LIKE 'PROJECT:%%'"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params)
+        return cursor.rowcount or 0
+
+
 def _build_data_schedule_task_refresh_payload():
     rows = _build_data_schedule_task_rows()
     stats = {
@@ -2229,7 +2248,13 @@ def _operate_data_schedule_tasks(action, task_rows):
             }
 
         if action_value == DATA_SCHEDULE_TASK_ACTION_DELETE:
-            deleted = _delete_data_schedule_queue_items(task_ids)
+            deleted = 0
+            if deduped_project_ids:
+                deleted = _delete_data_schedule_queue_items_by_project_ids(deduped_project_ids)
+
+            # Fallback for edge cases where queue rows are missing project_id values.
+            if deleted <= 0:
+                deleted = _delete_data_schedule_queue_items(task_ids)
             return {
                 'deleted': deleted,
                 'fileReset': 0,
